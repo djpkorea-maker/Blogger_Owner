@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+build/
+dist/
+release/
+*.spec
+*.sqlite3*
+*.db
+*.bak
+*.jsonl
+settings.json
+.env
+.env.*
+image_cache/
+diagnostics/
