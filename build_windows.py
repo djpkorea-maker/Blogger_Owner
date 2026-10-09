@@ -66,7 +66,7 @@ def main():
     from datetime import datetime
     release=ROOT/'release'/('R3_0_Windows_Dev_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
     release.mkdir(parents=True)
-    print('빌드 생성:',bundle(release,smoke_results))
+    print('Build bundle:',bundle(release,smoke_results))
     print('Windows 화면/설정/중단/실계정 검증 전입니다. 설치용 최종판으로 배포하지 마세요.')
 
 if __name__=='__main__':main()
