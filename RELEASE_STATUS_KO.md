@@ -8,13 +8,14 @@
 | Python 자동 검사 | 169개 모의 테스트 통과 |
 | 읽기 전용 점검 도구 | 데모에서 첫 조회 3개/두 번째 재사용 3개 확인 |
 | Bridge 보호 검사 | 모의 검사 통과 |
-| Windows EXE 제작 | Windows 개발 환경 필요, 미실시 |
-| Windows 화면·DPAPI·깨끗한 PC 실행 | 미실시 |
+| Windows EXE 제작 | GitHub Windows 빌드 성공, 일반/진단 EXE 생성 |
+| Windows 기본 화면·DPAPI | 두 EXE의 기본 자동 실행 검사 통과 |
+| 사용자 PC 화면·중단 복구·깨끗한 PC 실행 | 미실시 |
 | 실제 Blogger·AI·Search Console 통합 | 미실시 |
 | 검색설명 Blogger 저장 | 지원 및 실제 저장 확인 필요 |
 | 사용자용 최종 배포 | 위 실환경 확인 후 진행 |
 
-개발 보관 ZIP을 설치하실 필요는 없습니다. 사용자가 개발 도구를 설치하거나 EXE를 빌드하도록 요구하는 배포 방식은 목표가 아닙니다. 현재 Linux 환경에서는 Windows 실행 시험을 수행할 수 없습니다. 모의 검사 통과를 실계정 검증이나 AdSense 승인으로 표시하지 않습니다.
+Windows 시험판은 ZIP 전체를 해제하고 Studio/R3_Blogger_Studio.exe로 실행합니다. 사용자에게 개발 도구 설치나 EXE 빌드를 요구하지 않습니다. 기본 자동 실행 검사는 GitHub Windows 환경에서 수행했으며 사용자 PC 및 실계정 통합 검증은 남아 있습니다. 검사 통과를 AdSense 승인으로 표시하지 않습니다.
 
 ## 0.59 재개 보완
 
