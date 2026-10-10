@@ -29,6 +29,7 @@ def history_text(rows):
         if isinstance(detail,dict):
             for key,label in [('http_status','HTTP 오류 코드'),('reason','오류 분류'),('model','사용 모델'),('summary','원인'),('action','다음 조치'),('retry_after_seconds','재시도 대기(초)'),('stage','중단 단계'),('request_type','요청 종류'),('elapsed_seconds','해당 요청 대기(초)'),('timeout_seconds','요청 대기 설정(초)')]:
                 if detail.get(key) is not None:lines.append(label+': '+str(detail[key]))
+            lines.extend(diagnostic_lines(detail))
         elif row['status']=='FAILED':lines.append('이전 기록에는 상세 원인이 없습니다. 보완 버전으로 재검사해야 확인할 수 있습니다.')
     return '\n\n'.join(lines) or '저장된 작업 기록이 없습니다.'
 
@@ -98,7 +99,32 @@ def inspection_text(row):
     for finding in review.get('findings',[]):
         lines.extend(['\n문제 위치: '+finding['location'],'문제 내용: '+finding['excerpt'],'이유: '+finding['reason'],'수정 제안: '+finding['suggestion']])
     if review and issues and not review.get('findings'):lines.append('세부 문제 위치가 응답에 없습니다. 심층 재검사 또는 수정안 검토가 필요합니다.')
+    access=d.get('link_access')
+    if isinstance(access,dict):
+        lines.append('\n링크별 공개 접근 결과 · 사실 근거 적합성과는 별도:')
+        labels_access={'ACCESSIBLE':'접근 가능','HTTP_ERROR':'HTTP 오류','FETCH_FAILED':'조회 실패','INVALID_URL':'주소 형식 오류'}
+        for item in access.get('results',[]):
+            lines.append('• '+item['url']+' → '+labels_access.get(item['state'],item['state'])+(' ('+str(item['http_status'])+')' if 'http_status' in item else ''))
+        if not access.get('results'):lines.append('검사할 본문 링크 없음')
     if d.get('error_diagnostic'):
         error=d['error_diagnostic'];lines.append('검사 실패 원인: '+error.get('summary','확인 필요')+' / '+error.get('action','작업 기록 확인'))
+        lines.extend(diagnostic_lines(error))
     if not d.get('verified'):lines.append('\n다음: 연결 오류가 있으면 먼저 해결 → 선택 글 심층 검사 → 수정안 만들기 → 변경 내용 검토')
     return '\n'.join(lines)
+
+
+def diagnostic_lines(detail):
+    lines=[]
+    if detail.get('missing_criteria'):lines.append('부족한 검사 기준: '+detail['missing_criteria'])
+    for claim in detail.get('unverified_claims',[]):
+        lines.append('근거 미확보 주장: '+claim['text']+' / '+claim['reason'])
+    if detail.get('verification_targets') and not detail.get('unverified_claims'):
+        lines.append('검증 대상으로 전달한 본문 문장 · 개별 근거 판정 미완료:')
+        lines.extend('• '+text for text in detail['verification_targets'])
+    for key,label in [('existing_urls','본문의 기존 링크'),('search_urls','실제 검색 출처'),('unmatched_urls','AI가 제시한 불일치 출처')]:
+        if detail.get(key):
+            lines.append(label+' · 표시에서는 주소의 질의값·앵커 제외:')
+            lines.extend('• '+url for url in detail[key])
+    for attempt in detail.get('attempts',[]):
+        lines.append('근거 조사 '+str(attempt['attempt'])+'차: '+attempt['reason'])
+    return lines

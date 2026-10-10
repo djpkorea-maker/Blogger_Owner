@@ -7,6 +7,27 @@ from .google import public_fetch
 
 class LinkHold(RuntimeError):pass
 
+def inspect_link_access(content,base_url,fetch=public_fetch,checkpoint=lambda:None):
+    from .evidence import display_url
+    results=[];seen=set()
+    for href in Document(content).links:
+        checkpoint()
+        if href.startswith('#'):continue
+        url=normalized(urljoin(base_url,href))
+        if url in seen:continue
+        seen.add(url)
+        try:parsed=urlparse(url);valid=parsed.scheme in ('https','http') and parsed.hostname and not parsed.username and not parsed.password
+        except ValueError:valid=False
+        item={'url':display_url(url)}
+        if not valid:item['state']='INVALID_URL'
+        else:
+            try:
+                response=fetch(url)
+                item.update(state='ACCESSIBLE' if 200<=response['status']<300 else 'HTTP_ERROR',http_status=response['status'],final_url=display_url(response['url']))
+            except (OSError,ValueError):item['state']='FETCH_FAILED'
+        results.append(item)
+    return {'completed':True,'results':results,'factual_support_verified':False}
+
 def normalized(url):return urldefrag(url)[0]
 
 def append_verified_candidates(ai,title,content,live_posts,evidence):

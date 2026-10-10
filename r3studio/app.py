@@ -21,7 +21,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev61 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev62 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -97,11 +97,11 @@ class App:
         root.after(300,self.start)
     def set_status(self,text):
         self.status_text.set(text)
-    def sync_posts(self,store,adapter,blog_id):
+    def sync_posts(self,store,adapter,blog_id,selected_post=None):
         def progress(stage,index,total):
             text=f'{stage} {index}/{total}' if total else f'{stage} · {index}개 확인'
             self.events.put(('progress',text))
-        return Sync(store,adapter,blog_id,progress,self.cancel_token.checkpoint,force_refresh=True).run()
+        return Sync(store,adapter,blog_id,progress,self.cancel_token.checkpoint,force_refresh=selected_post is None,refresh_ids=() if selected_post is None else (selected_post,)).run()
     def cancel_current(self):
         if self.busy:
             self.cancel_token.request();self.set_status(text='중단 요청됨 · 진행 중인 요청 결과 확인 후 멈춥니다.')
@@ -205,7 +205,7 @@ class App:
         threading.Thread(target=self.google_worker,daemon=True).start()
     def google_worker(self):
         store=None;task=None
-        from .tasks import TaskLog,finish_error
+        from .tasks import TaskLog,finish_error,Cancelled
         try:
             from .google import Monitor,SearchConsole
             store=Store(str(self.base/'studio.sqlite3'));task=TaskLog(store,'Google 상태 감시')
@@ -278,10 +278,10 @@ class App:
         threading.Thread(target=self.ai_worker,args=(action,value),daemon=True).start()
     def ai_worker(self,action,value):
         store=None;task=None;adapter=None;current_stage=['연결 준비']
-        from .tasks import TaskLog,finish_error
+        from .tasks import TaskLog,finish_error,Cancelled
         try:
             from .ai import Gemini,AIError as GeminiError
-            from .evidence import collect_cached
+            from .evidence import collect_cached,EvidenceHold
             from .generation import Generation
             store=Store(str(self.base/'studio.sqlite3'));task=TaskLog(store,{'generate':'새 글 생성','images':'이미지 후보 검사','repair':'기존 글 수정안 생성','apply_repair':'수정안 적용','rollback':'백업 복원','jobs':'보류 목록 조회','load_job':'저장 작업 조회','resume':'이어서 작성','finalize':'최종 검사','generate_images':'이미지 자동 생성','upload_images':'이미지 업로드','draft':'초안 저장','publish':'공개 발행','schedule':'예약 저장','deep':'심층 검사','reconcile':'이전 저장 결과 재확인','reconcile_apply':'수정 결과 확인','reconcile_images':'이미지 업로드 결과 확인','execute_plan':'검토한 저장 계획 실행'}.get(action,'작업'))
             if action in ('jobs','load_job'):
@@ -313,7 +313,7 @@ class App:
             # Refresh Blogger before sending local content to any generation/check request.
             self.events.put(('progress','최신 Blogger 상태 동기화 중…'))
             self.cancel_token.checkpoint()
-            self.sync_posts(store,adapter,adapter.blog_id);self.cancel_token.checkpoint(); run_checks(store,adapter.blog_id,force_recheck=True)
+            self.sync_posts(store,adapter,adapter.blog_id,selected_post=value if action=='deep' else None);self.cancel_token.checkpoint(); run_checks(store,adapter.blog_id,force_recheck=True)
             if action in ('repair','apply_repair','rollback','reconcile_apply'):
                 from .recovery import Recovery,rollback_verified
                 from .bridge import WriteBridgeAdapter
@@ -388,17 +388,33 @@ class App:
             elif action=='generate':
                 result=Generation(store,ai,adapter.blog_id,progress).generate_many(value)
             else:
-                row=store.db.execute('SELECT title,content_hash FROM posts WHERE blog_id=? AND post_id=? AND present=1',(adapter.blog_id,value)).fetchone()
+                row=store.db.execute('SELECT title,content,content_hash FROM posts WHERE blog_id=? AND post_id=? AND present=1',(adapter.blog_id,value)).fetchone()
                 if not row: raise ValueError('최신 Blogger 목록에 없는 글입니다.')
-                pack=collect_cached(store,ai,row['title'],row['title'],adapter.blog_id+':'+value+':'+row['content_hash'],progress)
+                try:
+                    pack=collect_cached(store,ai,row['title'],row['title'],adapter.blog_id+':'+value+':'+row['content_hash'],progress,article=row['content'])
+                except (GeminiError,EvidenceHold) as exc:
+                    from .existing import partial_link_review,record_incomplete
+                    partial=None
+                    try:partial=partial_link_review(store,adapter,value,progress)
+                    except Cancelled:raise
+                    except Exception:pass # Preserve the original classified research error.
+                    incomplete=record_incomplete(store,adapter.blog_id,value,exc,partial)
+                    if incomplete:self.events.put(('inspection_incomplete',incomplete))
+                    exc.partial_recorded=True
+                    raise
                 from .existing import inspect_existing
                 result=inspect_existing(store,adapter,ai,value,pack,self.base/'image_cache',progress)
             task.finish('COMPLETED')
             self.events.put(('ai_done',result))
         except Exception as exc:
-            if action=='deep' and store and adapter:
-                from .existing import record_incomplete
-                incomplete=record_incomplete(store,adapter.blog_id,value,exc)
+            if action=='deep' and store and adapter and not getattr(exc,'partial_recorded',False):
+                from .existing import record_incomplete,partial_link_review
+                from .bridge import BridgeError
+                partial=None
+                if not isinstance(exc,(BridgeError,Cancelled)):
+                    try:partial=partial_link_review(store,adapter,value,progress)
+                    except Exception:pass
+                incomplete=record_incomplete(store,adapter.blog_id,value,exc,partial)
                 if incomplete:self.events.put(('inspection_incomplete',incomplete))
             finish_error(task,exc);self.events.put(('error',str(exc)))
         finally:
@@ -410,7 +426,7 @@ class App:
         threading.Thread(target=self.worker,args=(demo,),daemon=True).start()
     def worker(self,demo):
         store=None;task=None
-        from .tasks import TaskLog,finish_error
+        from .tasks import TaskLog,finish_error,Cancelled
         try:
             store=Store(str(self.base/('demo.sqlite3' if demo else 'studio.sqlite3')));task=TaskLog(store,'LIVE 동기화 + 빠른 검사')
             if not demo:

@@ -18,6 +18,8 @@ class TaskLog:
 def finish_error(task,error):
     # Only our classified AI diagnostics are safe to persist.
     from .ai import AIError
+    from .bridge import BridgeError
+    from .evidence import EvidenceHold
     import json
-    details=json.dumps(error.diagnostic,ensure_ascii=False) if isinstance(error,AIError) and error.diagnostic else type(error).__name__
+    details=json.dumps(error.diagnostic,ensure_ascii=False) if isinstance(error,(AIError,BridgeError,EvidenceHold)) and error.diagnostic else type(error).__name__
     if task:task.finish('CANCELLED' if isinstance(error,Cancelled) else 'FAILED',details)

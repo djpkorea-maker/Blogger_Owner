@@ -2,9 +2,21 @@
 import json
 import os
 import urllib.request
+import urllib.error
+import socket
+import time
 from urllib.parse import urlparse
 
-class BridgeError(RuntimeError): pass
+class BridgeError(RuntimeError):
+    def __init__(self,message,diagnostic=None):
+        super().__init__(message);self.diagnostic=diagnostic
+
+def bridge_failure(reason,http_status=None,elapsed=None):
+    summaries={'TIMEOUT':'Blogger Bridge 응답 시간 초과','NETWORK':'Blogger Bridge 네트워크 연결 실패','HTTP_ERROR':'Blogger Bridge HTTP 요청 실패','INVALID_JSON':'Blogger Bridge가 JSON 대신 다른 응답을 반환했습니다.','REJECTED':'Blogger Bridge가 요청을 거절했습니다.'}
+    d={'reason':reason,'summary':summaries[reason],'stage':'Blogger 조회','action':'작업 기록의 오류 분류를 확인하세요. 인증값을 다시 입력하기 전에 원인을 확인해야 합니다.'}
+    if http_status is not None:d['http_status']=http_status
+    if elapsed is not None:d['elapsed_seconds']=round(elapsed,1)
+    return BridgeError(d['summary'],d)
 
 class BridgeAdapter:
     def __init__(self,url,secret,blog_id,transport=None):
@@ -22,18 +34,31 @@ class BridgeAdapter:
     def from_environment(cls):
         return cls(os.environ.get('R3_BRIDGE_URL',''),os.environ.get('R3_BRIDGE_SECRET',''),os.environ.get('R3_BLOG_ID',''))
     def _http(self,body):
+        started=time.monotonic()
         req=urllib.request.Request(self.url,data=json.dumps(body).encode(),headers={'Content-Type':'application/json'},method='POST')
         try:
             with urllib.request.urlopen(req,timeout=45) as response:
                 data=response.read(12*1024*1024+1)
                 if len(data)>12*1024*1024: raise BridgeError('Bridge 응답 크기 초과')
                 return json.loads(data)
-        except (OSError,ValueError):
-            raise BridgeError('Bridge 조회 실패: 연결 주소와 배포 권한을 확인하세요.') from None
+        except urllib.error.HTTPError as exc:
+            raise bridge_failure('HTTP_ERROR',exc.code,time.monotonic()-started) from None
+        except urllib.error.URLError as exc:
+            reason='TIMEOUT' if isinstance(exc.reason,(TimeoutError,socket.timeout)) else 'NETWORK'
+            raise bridge_failure(reason,elapsed=time.monotonic()-started) from None
+        except (TimeoutError,socket.timeout):
+            raise bridge_failure('TIMEOUT',elapsed=time.monotonic()-started) from None
+        except OSError:
+            raise bridge_failure('NETWORK',elapsed=time.monotonic()-started) from None
+        except ValueError:
+            raise bridge_failure('INVALID_JSON',elapsed=time.monotonic()-started) from None
     def _call(self,action,payload):
         result=self.transport({'secret':self.secret,'action':action,'payload':payload})
         if not isinstance(result,dict) or result.get('ok') is not True:
-            raise BridgeError('Bridge 조회 거절: 설정 또는 API 권한을 확인하세요.')
+            # Never store raw server errors: they may contain deployment addresses or tokens.
+            import re
+            match=re.fullmatch(r'blogger_http_(\d{3})',str(result.get('error',''))) if isinstance(result,dict) else None
+            raise bridge_failure('REJECTED',int(match[1]) if match else None)
         if str(result.get('blogId'))!=self.blog_id: raise BridgeError('다른 블로그 응답: 동기화 중지')
         return result
     def list_metadata(self):

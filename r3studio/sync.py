@@ -82,9 +82,10 @@ COMMIT;
     def close(self):self.db.close()
 
 class Sync:
-    def __init__(self,store,adapter,blog_id,progress=None,checkpoint=None,force_refresh=False):
+    def __init__(self,store,adapter,blog_id,progress=None,checkpoint=None,force_refresh=False,refresh_ids=()):
         self.store,self.adapter,self.blog_id=store,adapter,str(blog_id)
         self.force_refresh=force_refresh
+        self.refresh_ids={str(pid) for pid in refresh_ids}
         self.progress=progress or (lambda *args:None)
         self.checkpoint=checkpoint or (lambda:None)
     def run(self):
@@ -108,7 +109,7 @@ class Sync:
                 old=db.execute('SELECT * FROM posts WHERE blog_id=? AND post_id=?',(self.blog_id,pid)).fetchone()
                 metadata_matches=old is not None and all(
                     old[field]==meta[field] for field in ('title','url') if field in meta)
-                if not self.force_refresh and old and old['present'] and old['updated']==updated and old['status']==status and metadata_matches:
+                if not self.force_refresh and pid not in self.refresh_ids and old and old['present'] and old['updated']==updated and old['status']==status and metadata_matches:
                     reused+=1
                     self.progress('Blogger 본문 비교',index,len(metadata))
                     continue

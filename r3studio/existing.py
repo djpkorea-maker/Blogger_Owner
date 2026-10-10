@@ -9,7 +9,7 @@ from .links import check_links,LinkHold
 from .google import public_fetch
 from .tasks import Cancelled
 
-def record_incomplete(store,blog_id,pid,error=None):
+def record_incomplete(store,blog_id,pid,error=None,partial=None):
     row=store.db.execute('SELECT status,content_hash FROM posts WHERE blog_id=? AND post_id=? AND present=1',(blog_id,pid)).fetchone()
     if not row:return None
     grade='SCHEDULED_HOLD' if row['status']=='SCHEDULED' else 'NEEDS_DEEP'
@@ -19,11 +19,31 @@ def record_incomplete(store,blog_id,pid,error=None):
     fast=cached_fast(old[0]) if old else None
     if fast:details['fast']=asdict(fast)
     from .ai import AIError
-    if isinstance(error,AIError) and error.diagnostic:details['error_diagnostic']=error.diagnostic
+    from .bridge import BridgeError
+    from .evidence import EvidenceHold
+    if isinstance(error,(AIError,BridgeError,EvidenceHold)) and error.diagnostic:details['error_diagnostic']=error.diagnostic
+    if partial:details.update(partial)
     with store.db:
         store.db.execute('INSERT INTO recovery_checks(blog_id,post_id,content_hash,engine_version,checked_at,grade,details) VALUES(?,?,?,?,?,?,?)',(blog_id,pid,row['content_hash'],'R3.0-existing-incomplete',now(),grade,json.dumps(details,ensure_ascii=False)))
         store.db.execute('UPDATE posts SET grade=? WHERE blog_id=? AND post_id=?',(grade,blog_id,pid))
     return details
+
+def partial_link_review(store,adapter,pid,progress=lambda *args:None):
+    """Read-only reachability is useful even when the evidence/AI stage fails.
+
+    It never implies factual support or overall PASS, and checks freshness twice.
+    """
+    from .links import inspect_link_access
+    before=adapter.get_post(pid)
+    row=store.db.execute('SELECT content_hash,updated FROM posts WHERE blog_id=? AND post_id=? AND present=1',(adapter.blog_id,pid)).fetchone()
+    if not row or post_hash(before)!=row['content_hash'] or before['updated']!=row['updated']:
+        raise ValueError('부분 검사 중 글 변경: 다시 동기화하세요.')
+    progress('부분 검사 · 링크 공개 접근',0,1)
+    access=inspect_link_access(before['content'],before.get('url',''),public_fetch,getattr(adapter,'checkpoint',lambda:None))
+    after=adapter.get_post(pid)
+    if post_hash(after)!=post_hash(before) or after['updated']!=before['updated'] or after.get('url','')!=before.get('url',''):
+        raise ValueError('부분 검사 중 LIVE 변경: 결과 저장 중지')
+    return {'link_access':access,'check_states':{'links':'공개 접근 검사 완료 · 근거 적합성은 미검증','images':'미검사 · 근거 조사 실패 후 AI 이미지 호출을 추가하지 않았습니다.'}}
 
 def inspect_existing(store,adapter,ai,pid,evidence,cache_dir,progress=lambda *args:None):
     before=adapter.get_post(pid)
@@ -57,6 +77,11 @@ def inspect_existing(store,adapter,ai,pid,evidence,cache_dir,progress=lambda *ar
             stage='images' if isinstance(error,ImageHold) else 'links'
             result['check_states'][stage]='미완료 · '+str(error)
             result.update(grade='SCHEDULED_HOLD' if before['status']=='SCHEDULED' else 'B',issues=[str(error)])
+    if result['check_states']['links']!='완료':
+        from .links import inspect_link_access
+        progress('부분 검사 · 링크 공개 접근',0,1)
+        result['link_access']=inspect_link_access(before['content'],before.get('url',''),public_fetch,getattr(adapter,'checkpoint',lambda:None))
+        result['check_states']['links']='공개 접근 검사 완료 · 근거 적합성은 미검증'
     after=adapter.get_post(pid)
     if post_hash(after)!=post_hash(before) or after['updated']!=before['updated']:raise ValueError('검사 중 LIVE 변경: 판정 적용 중지')
     with store.db:
