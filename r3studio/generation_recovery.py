@@ -122,6 +122,7 @@ def supplement(ai, pack, reader, title, topic, failure, progress, record):
         else:additional = {s['id']: reader.read(s['url']) for s in requested}
         final_urls = {o.get('final_url', '') for o in originals.values()}
         hashes = {o.get('text_hash') for o in originals.values()}
+        accepted_new = 0
         for source in requested:
             original = additional.get(source['id'], {})
             state = original.get('status', 'UNAVAILABLE')
@@ -132,11 +133,11 @@ def supplement(ai, pack, reader, title, topic, failure, progress, record):
                 elif not isinstance(original.get('text'), str) or original.get('text_hash') != digest(original['text']):
                     state = 'INVALID'; reason = '추가 원문 본문 지문 확인 불가'
                 else:
-                    originals[source['id']] = original; sources.append(source)
+                    originals[source['id']] = original; sources.append(source); accepted_new += 1
                     final_urls.add(original.get('final_url', '')); hashes.add(original.get('text_hash'))
             trace['new_source_checks'].append({'url': display_url(original.get('final_url') or source['url']), 'state': state, 'reason': reason})
         record(deepcopy(trace))
-        if not any(s['assessment'] == 'PENDING_ORIGINAL_REVIEW' for s in sources if 'assessment' in s):
+        if accepted_new == 0:
             raise EvidenceHold('추가 검색 원문은 접근 불가이거나 기존 자료와 중복입니다.')
         progress('추가 원문에서 부족한 사실 추출', 0, 1)
         prompt = ('R3 SUPPLEMENT ORIGINAL FACTS: 실제 원문만 사용하여 새 글에 부족한 사실을 추출하세요. '

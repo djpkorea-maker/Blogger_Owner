@@ -129,10 +129,19 @@ class Tests(unittest.TestCase):
             again=service.resume(r['proposal_id'],generator);self.assertEqual(again['replacement_job_id'],r['replacement_job_id'])
             self.assertEqual(ai.searches,1);self.assertEqual(len(generator.calls),2);s.close()
 
+    def test_old_pending_assessment_does_not_count_as_new_download(self):
+        p=one_used();p['sources'][0]['assessment']='PENDING_ORIGINAL_REVIEW'
+        p['original_verification']['pack_hash']=digest({'sources':p['sources'],'facts':p['facts']})
+        ai=AI();records=[]
+        with self.assertRaises(EvidenceHold) as caught:
+            supplement(ai,p,Reader('unavailable'),TITLE,TITLE,EvidenceHold('작성 근거 부족'),lambda *a:None,records.append)
+        self.assertEqual(ai.searches,1);self.assertEqual(ai.additions,0)
+        self.assertIn('접근 불가',str(caught.exception));self.assertEqual(records[-1]['state'],'FAILED')
+
     def test_supplement_uses_required_facts_schema_if_client_supports_it(self):
         class Strict(AI):
             def structured_object(self,prompt,schema):
-                self.assert_schema=schema
+                if 'R3 SUPPLEMENT ORIGINAL FACTS' in prompt:self.assert_schema=deepcopy(schema)
                 return self.object(prompt)
         ai=Strict()
         out=supplement(ai,one_used(),Reader(),TITLE,TITLE,EvidenceHold('작성 근거 부족'),lambda *a:None,lambda value:None)
