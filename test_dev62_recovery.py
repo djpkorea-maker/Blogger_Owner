@@ -109,6 +109,15 @@ class Tests(unittest.TestCase):
    s=Store(directory+'/studio.sqlite3');row=s.db.execute('SELECT details FROM recovery_checks WHERE engine_version="R3.0-existing-incomplete" ORDER BY id DESC').fetchone()
    detail=json.loads(row[0]);self.assertEqual(detail['link_access']['results'][0]['state'],'ACCESSIBLE');self.assertFalse(detail['verified'])
    task=s.db.execute('SELECT status,details FROM task_runs ORDER BY id DESC').fetchone();self.assertEqual(task['status'],'FAILED');self.assertEqual(json.loads(task['details'])['reason'],'EVIDENCE_INCOMPLETE');s.close()
+ def test_unavailable_originals_name_unverified_facts_and_urls(self):
+  from r3studio.sources import verify_origins
+  class Reader:
+   def read(self,url):return {'status':'UNAVAILABLE','reason':'원문 접근 확인 불가'}
+  with self.assertRaises(EvidenceHold) as caught:verify_origins(None,pack(),Reader())
+  d=caught.exception.diagnostic
+  self.assertEqual(len(d['unverified_claims']),len(pack()['facts']))
+  self.assertEqual(d['unverified_claims'][0]['text'],pack()['facts'][0]['text'])
+  self.assertEqual(d['source_checks'][0]['state'],'UNAVAILABLE')
  def test_partial_access_respects_cancellation(self):
   with self.assertRaises(Cancelled):inspect_link_access('<a href="https://e.test">a</a>','',checkpoint=lambda:(_ for _ in ()).throw(Cancelled()))
 if __name__=='__main__':unittest.main()

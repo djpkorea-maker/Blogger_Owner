@@ -125,6 +125,8 @@ def diagnostic_lines(detail):
         if detail.get(key):
             lines.append(label+' · 표시에서는 주소의 질의값·앵커 제외:')
             lines.extend('• '+url for url in detail[key])
+    for source in detail.get('source_checks',[]):
+        lines.append('원문 접근: '+source['url']+' / '+source['state']+(' / '+source['reason'] if source.get('reason') else ''))
     for attempt in detail.get('attempts',[]):
         lines.append('근거 조사 '+str(attempt['attempt'])+'차: '+attempt['reason'])
     return lines
