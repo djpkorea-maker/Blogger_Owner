@@ -132,7 +132,9 @@ class Tests(unittest.TestCase):
  def test_dev70_checkpoint_can_be_reused_after_restart_in_dev71(self):
   from test_sync import Adapter
   with tempfile.TemporaryDirectory() as d:
-   path=d+'/db';s=Store(path);a=Adapter();sync=Sync(s,a,'blog',force_refresh=force_whole_review(70)).run();checks=run_checks(s,'blog',True);remember_checkpoint(s,'blog',sync,checks);s.close()
+   path=d+'/db';s=Store(path);a=Adapter();sync=Sync(s,a,'blog',force_refresh=force_whole_review(70)).run();checks=run_checks(s,'blog',True);
+   with patch('r3studio.cache_policy.VERSION',70):remember_checkpoint(s,'blog',sync,checks)
+   s.close()
    s=Store(path);self.assertEqual(s.db.execute('SELECT version FROM application_checkpoints').fetchone()[0],70)
    sync=Sync(s,a,'blog',force_refresh=force_whole_review(71)).run();checks=run_checks(s,'blog',force_whole_review(71))
    self.assertEqual(sync['reused'],3);self.assertEqual(checks['reused'],3);self.assertTrue(force_whole_review(71,True));s.close()
@@ -156,3 +158,4 @@ class Tests(unittest.TestCase):
   p={'deep':{'review':dict(REVIEW)},'fast':{'issues':['이미지 2장 미만']}};self.assertTrue(text_ready(p))
   p['fast']['issues'].append('태그 순서 확인: p');self.assertFalse(text_ready(p))
   p['fast']['issues']=[];p['deep']['review']['fact']='UNKNOWN';self.assertFalse(text_ready(p))
+

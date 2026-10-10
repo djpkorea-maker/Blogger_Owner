@@ -140,6 +140,22 @@ def smoke_test():
                 find_button(dialog,'본문·이미지 전체 새로 만들기').invoke()
             if calls!=[('replace_all',{'proposal_id':0,'topic':'청소기 안전 점검 새 주제'})] or not dialog.winfo_exists():raise RuntimeError('전체 교체 버튼·원본 비교창 유지 실패')
             editor.destroy();dialog.destroy()
+            # Failed replacement must show the requested title and resume action,
+            # never an empty article comparison or the old title as the new one.
+            result={'proposal_id':71,'status':'HOLD','mode':'REPLACEMENT','before':{'id':'1536421547122726881','title':'기존 모터 원리','content':html},'replacement_topic':'로봇청소기가 문턱에서 멈출 때 안전하게 점검하는 방법','replacement_job_id':7,'replacement_stage':'Evidence 원문 확인','reason':'근거 자료 확인 보류'}
+            held=app.show_repair(result);root.update_idletasks()
+            # ScrolledText is wrapped in a frame; inspect through descendants.
+            def all_text(widget):
+                return ''.join((child.get('1.0','end') if isinstance(child,tk.Text) else '')+all_text(child) for child in widget.winfo_children())
+            content=all_text(held)
+            if result['replacement_topic'] not in content or 'Evidence 원문 확인' not in content or '근거 자료 확인 보류' not in content:raise RuntimeError('전체 교체 보류 원인/입력 제목 표시 실패')
+            if '새 제목: 기존 모터 원리' in content or hasattr(held,'preview_widgets'):raise RuntimeError('빈 수정안 비교 표시 차단 실패')
+            calls.clear();find_button(held,'같은 작업 이어서 진행').invoke()
+            if calls!=[('replace_resume',{'proposal_id':71})]:raise RuntimeError('같은 교체 작업 재개 실패')
+            result.update(proposed_title=result['replacement_topic'],proposed_content='<h2>안전 점검</h2><p>전원을 끄고 확인합니다.</p>')
+            compared=app.show_repair(result);root.update_idletasks()
+            if held.winfo_exists() or not compared.preview_widgets or '전원을 끄고 확인합니다.' not in compared.preview_widgets[1].get('1.0','end'):raise RuntimeError('부분 본문 비교·보류창 종료 실패')
+            compared.destroy()
             settings=Settings(Path(folder)/'smoke-settings.json')
             settings.save({'R3_BRIDGE_SECRET':'local-smoke-test-only','R3_START_MODE':'DEMO'})
             if settings.load().get('R3_BRIDGE_SECRET')!='local-smoke-test-only':raise RuntimeError('DPAPI 복호화 시험 실패')
@@ -191,3 +207,4 @@ def launch(diagnostic=False,app_factory=None,root_factory=None):
             try:root.destroy()
             except tk.TclError:pass
         if lock:lock.release()
+

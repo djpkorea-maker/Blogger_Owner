@@ -35,7 +35,7 @@ class TrialRefreshTests(unittest.TestCase):
   from r3studio.app import App
   with tempfile.TemporaryDirectory() as d:
    for attempt in range(2):
-    app=App.__new__(App);app.base=Path(d);app.events=queue.Queue();app.cancel_token=Cancellation();app.worker(True)
+    app=App.__new__(App);app.base=Path(d);app.events=queue.Queue();app.cancel_token=Cancellation();app.worker(True,force=True)
     events=[]
     while not app.events.empty():events.append(app.events.get())
     done=events[-1];self.assertEqual(done[0],'done')

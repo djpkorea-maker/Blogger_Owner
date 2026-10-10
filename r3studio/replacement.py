@@ -9,6 +9,13 @@ from .images import ImageHold,inspect_bytes
 from .imagegen import generate_candidates
 from .gates import Document
 from .tasks import Cancelled
+from .titles import normalize
+
+def replacement_view(p):
+    """Keep the requested topic distinct from an AI-generated title."""
+    return {'topic':p.get('replacement_topic',''), 'title':p.get('proposed_title') or '아직 생성되지 않음',
+            'stage':p.get('replacement_stage') or '생성 준비', 'reason':p.get('reason') or '결과 확인 필요',
+            'has_body':bool(p.get('proposed_content','').strip()), 'can_resume':type(p.get('replacement_job_id')) is int}
 
 def replacement_target(store,blog_id,payload):
     target=payload.get('replacement_target')
@@ -45,10 +52,23 @@ class Replacement:
         self.store,self.adapter,self.ai=store,adapter,ai;self.cache=Path(cache_dir);self.progress=progress
         Recovery(store,ai,adapter,progress)
         self.images=RepairImages(store,adapter,ai,cache_dir,progress)
+    def matching_work(self,before,topic):
+        for p in saved_replacements(self.store,self.adapter.blog_id):
+            if (str(p['before']['id'])==str(before['id']) and normalize(p.get('replacement_topic',''))==normalize(topic)
+                and p['expected_hash']==post_hash(before) and p['before'].get('updated')==before.get('updated')
+                and p['before'].get('url','')==before.get('url','') and p['before'].get('published')==before.get('published')
+                and type(p.get('replacement_job_id')) is int):
+                # Never attach another post's or a new-publication job to this proposal.
+                g=Generation(self.store,self.ai,self.adapter.blog_id,self.progress)
+                target=replacement_target(self.store,self.adapter.blog_id,g.load_job(p['replacement_job_id'])['payload'])
+                if target and target['proposal_id']==p['proposal_id']:return p
+        return None
     def start_post(self,post_id,topic,generator):
         if not isinstance(topic,str) or not topic.strip():raise ImageHold('새로 작성할 주제를 입력하세요.')
         before=self.adapter.get_post(str(post_id))
         if str(before.get('id'))!=str(post_id):raise ImageHold('전체 교체 대상 글 번호 불일치')
+        previous=self.matching_work(before,topic.strip())
+        if previous:return self.resume(previous['proposal_id'],generator)
         original={'before':before,'expected_hash':post_hash(before),'reason':'전체 교체 전 원본 보관'}
         with self.store.db:
             seed=self.store.db.execute('INSERT INTO repair_proposals(blog_id,post_id,created_at,status,payload) VALUES(?,?,?,?,?)',(self.adapter.blog_id,str(post_id),now(),'HOLD',json.dumps(original,ensure_ascii=False))).lastrowid
@@ -56,10 +76,13 @@ class Replacement:
     def start(self,proposal_id,topic,generator):
         if not isinstance(topic,str) or not topic.strip():raise ImageHold('새로 작성할 주제를 입력하세요.')
         _,old=self.images.load(proposal_id);self.images.baseline(old)
+        previous=self.matching_work(old['before'],topic.strip())
+        if previous:return self.resume(previous['proposal_id'],generator)
         p={'mode':'REPLACEMENT','before':old['before'],'expected_hash':old['expected_hash'],'replacement_topic':topic.strip(),'site_url':old['before'].get('url','') or next((r[0] for r in self.store.db.execute('SELECT url FROM posts WHERE blog_id=? AND present=1 AND status="LIVE" AND url!=""',(self.adapter.blog_id,))),''),'changes':['제목·본문·이미지 2장·ALT·그림 설명 전체 교체'],'reason':'전체 교체 생성 준비 · Blogger 미반영'}
         with self.store.db:
             pid=self.store.db.execute('INSERT INTO repair_proposals(blog_id,post_id,created_at,status,payload) VALUES(?,?,?,?,?)',(self.adapter.blog_id,str(p['before']['id']),now(),'HOLD',json.dumps(p,ensure_ascii=False))).lastrowid
         try:
+            p['replacement_stage']='주제 작업 예약'
             g=Generation(self.store,self.ai,self.adapter.blog_id,self.progress)
             job=g.reserve(topic.strip());p['replacement_job_id']=job
             self.images.save(pid,p)
@@ -81,10 +104,12 @@ class Replacement:
             if target['proposal_id']!=pid:raise ImageHold('다른 수정안의 생성 작업: 진행 중지')
             self.progress('전체 교체 본문 생성',0,1)
             if not text_ready(payload):
-                g.resume(job);payload=g.load_job(job)['payload']
-            if payload.get('content'):
-                p['proposed_title']=payload['title'];p['proposed_content']=payload['content'];p['search_description']=payload.get('search_description','');p['evidence']=payload.get('evidence',{})
-                self.images.save(pid,p)
+                try:g.resume(job)
+                finally:
+                    # Generation persists partial results even on cancellation/errors.
+                    self.capture(pid,p,g,job)
+                payload=g.load_job(job)['payload']
+            else:self.capture(pid,p,g,job)
             if not text_ready(payload):raise ImageHold(payload.get('reason','본문 품질 검사 미완료'))
             if not payload.get('replacement_links_ready'):
                 from .links import append_verified_candidates
@@ -131,3 +156,17 @@ class Replacement:
             p['reason']=str(exc)
             if getattr(exc,'diagnostic',None):p['error_diagnostic']=exc.diagnostic
             return self.images.save(pid,p)
+    def capture(self,pid,p,g,job):
+        record=g.load_job(job);payload=record['payload']
+        p['replacement_stage']=record['stage']
+        if not payload.get('content') and not payload.get('draft_content'):p.pop('proposed_content',None)
+        if not payload.get('title'):p.pop('proposed_title',None)
+        if payload.get('title'):
+            if p.get('proposed_title')!=payload['title']:p.pop('proposed_content',None)
+            p['proposed_title']=payload['title']
+        if payload.get('content') or payload.get('draft_content'):
+            p['proposed_content']=payload.get('content') or payload['draft_content'];p['search_description']=payload.get('search_description','');p['evidence']=payload.get('evidence',{})
+        if payload.get('error_diagnostic'):p['error_diagnostic']=payload['error_diagnostic']
+        else:p.pop('error_diagnostic',None)
+        self.images.save(pid,p)
+

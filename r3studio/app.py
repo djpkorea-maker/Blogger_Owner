@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev70 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev71 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -80,12 +80,13 @@ class App:
         self.google_notes=ScrolledText(self.google,wrap='word');self.google_notes.pack(fill='both',expand=True)
         controls=ttk.Frame(self.inspect); controls.pack(fill='x')
         self.button=ttk.Button(controls,text='LIVE 동기화 + Fast 검사',command=self.start); self.button.pack(side='left')
-        ttk.Label(controls,text='Dev70 조회·검사 기록 보관 · Dev71부터 재사용').pack(side='left',padx=15)
+        ttk.Label(controls,text='이전 기록 재사용 · 변경된 글만 조회·검사').pack(side='left',padx=15)
         ttk.Button(controls,text='수정안 만들기',command=self.start_repair).pack(side='left')
         ttk.Button(controls,text='수정·복원 결과 확인',command=self.start_apply_reconcile).pack(side='left',padx=5)
         ttk.Button(controls,text='수정 백업 복원',command=self.start_rollback).pack(side='left',padx=5)
         ttk.Button(controls,text='선택 글 심층 검사',command=self.start_deep).pack(side='right')
         whole_controls=ttk.Frame(self.inspect);whole_controls.pack(fill='x',pady=(6,0))
+        ttk.Button(whole_controls,text='전체 강제 재검사',command=lambda:self.start(force=True)).pack(side='right',padx=5)
         ttk.Button(whole_controls,text='본문·이미지 전체 새로 만들기',command=self.start_replacement).pack(side='left')
         ttk.Button(whole_controls,text='전체 교체 작업 불러오기',command=self.show_replacement_jobs).pack(side='left',padx=8)
         ttk.Label(whole_controls,text='선택한 기존 글의 번호·주소 유지 · 검토 후 적용').pack(side='left',padx=10)
@@ -132,12 +133,12 @@ class App:
         position=self.stage_progress.update(text)
         self.progress_bar.config(mode='determinate',maximum=9,value=position)
         self.inspection_log.insert('end',text+' · '+state['label']+'\n');self.inspection_log.see('end')
-    def sync_posts(self,store,adapter,blog_id,selected_post=None):
+    def sync_posts(self,store,adapter,blog_id,selected_post=None,force=False):
         def progress(stage,index,total):
             text=f'{stage} {index}/{total}' if total else f'{stage} · {index}개 확인'
             self.events.put(('progress',text))
         from .cache_policy import force_whole_review
-        return Sync(store,adapter,blog_id,progress,self.cancel_token.checkpoint,force_refresh=selected_post is None and force_whole_review(),refresh_ids=() if selected_post is None else (selected_post,)).run()
+        return Sync(store,adapter,blog_id,progress,self.cancel_token.checkpoint,force_refresh=selected_post is None and force_whole_review(force=force),refresh_ids=() if selected_post is None else (selected_post,)).run()
     def cancel_current(self):
         if self.busy:
             self.cancel_token.request();self.set_status(text='중단 요청됨 · 진행 중인 요청 결과 확인 후 멈춥니다.')
@@ -183,7 +184,7 @@ class App:
         if not selected or self.demo.get():
             messagebox.showinfo('R3.0','실제 블로그 글을 조회하고 전체 교체할 글을 선택하세요.');return
         post_id=selected[0]
-        topic=simpledialog.askstring('본문·이미지 전체 새로 만들기','새로 작성할 주제를 입력하세요.\n기존 글 번호·주소를 유지하며, 생성 후 검토와 최종 검증을 거칩니다.',initialvalue=self.results.get(post_id,{}).get('title',''),parent=self.root)
+        topic=simpledialog.askstring('본문·이미지 전체 새로 만들기','새로 작성할 제목을 입력하세요. 입력한 제목을 그대로 사용합니다.\n기존 글 번호·주소를 유지하며, 생성 후 검토와 최종 검증을 거칩니다.',initialvalue=self.results.get(post_id,{}).get('title',''),parent=self.root)
         if topic and topic.strip():self.start_ai('replace_post',{'post_id':post_id,'topic':topic.strip()})
     def start_apply_reconcile(self):
         if self.busy or self.demo.get():return
@@ -205,7 +206,39 @@ class App:
             if self.busy:return
             dialog.destroy();self.start_ai('execute_plan',plan)
         ttk.Button(dialog,text='검토한 계획으로 '+mode,command=execute).pack(pady=10)
+    def show_replacement_hold(self,result):
+        from .replacement import replacement_view
+        view=replacement_view(result);pid=result['proposal_id']
+        windows=getattr(self,'replacement_hold_windows',{});self.replacement_hold_windows=windows
+        dialog=windows.get(pid)
+        if dialog is None or not dialog.winfo_exists():
+            dialog=tk.Toplevel(self.root);dialog.geometry('800x480');windows[pid]=dialog
+        for child in dialog.winfo_children():child.destroy()
+        dialog.title('전체 교체 생성 보류 · 본문 미작성')
+        ttk.Label(dialog,text='새 본문을 아직 작성하지 못했습니다.',font=('',14,'bold')).pack(anchor='w',padx=15,pady=12)
+        text=ScrolledText(dialog,wrap='word',height=12);text.pack(fill='both',expand=True,padx=15,pady=8)
+        text.insert('end','기존 글 번호: '+str(result['before'].get('id',''))+'\n입력한 새 제목: '+view['topic']+'\n생성된 제목: '+view['title']+'\n중단 단계: '+view['stage']+'\n보류 원인: '+view['reason']+'\n\nBlogger의 기존 글과 이미지는 변경되지 않았습니다.\n')
+        from .presentation import diagnostic_lines
+        text.insert('end','\n'.join(diagnostic_lines(result.get('error_diagnostic',{}))))
+        if view['can_resume']:text.insert('end','\n같은 작업 이어서 진행은 저장된 작업 번호와 입력 제목을 유지합니다.')
+        else:text.insert('end','\n생성 작업 번호가 없습니다. 같은 제목의 저장 작업 확인 또는 제목 변경이 필요합니다.')
+        text.config(state='disabled')
+        controls=ttk.Frame(dialog);controls.pack(fill='x',padx=15,pady=12)
+        if view['can_resume']:
+            ttk.Button(controls,text='같은 작업 이어서 진행',command=lambda:self.start_ai('replace_resume',{'proposal_id':pid}) if not self.busy else None).pack(side='left')
+        def change_title():
+            if self.busy:return
+            title=simpledialog.askstring('전체 교체 제목 확인','새로 작성할 제목을 입력하세요. 같은 제목이면 저장된 교체 작업을 이어갑니다.',initialvalue=view['topic'],parent=dialog)
+            if title and title.strip():self.start_ai('replace_all',{'proposal_id':pid,'topic':title.strip()})
+        ttk.Button(controls,text='제목 확인·변경하여 진행',command=change_title).pack(side='left',padx=8)
+        ttk.Button(controls,text='닫기',command=dialog.destroy).pack(side='right')
+        return dialog
     def show_repair(self,result):
+        if result.get('mode')=='REPLACEMENT':
+            from .replacement import replacement_view
+            if not replacement_view(result)['has_body']:return self.show_replacement_hold(result)
+            previous=getattr(self,'replacement_hold_windows',{}).pop(result['proposal_id'],None)
+            if previous is not None and previous.winfo_exists():previous.destroy()
         pid=result['proposal_id']
         windows=getattr(self,'repair_windows',{});self.repair_windows=windows
         dialog=windows.get(pid)
@@ -219,14 +252,14 @@ class App:
         dialog.title('수정안 비교 · '+result['status'])
         def replace_all():
             if self.busy:return
-            topic=simpledialog.askstring('본문·이미지 전체 새로 만들기','새로 작성할 주제를 입력하세요.\n새 본문과 이미지 2장을 만들고, 기존 글 번호·주소를 유지합니다.\n생성만으로 Blogger 글이 변경되지는 않습니다.',initialvalue=result.get('replacement_topic',result['before'].get('title','')),parent=dialog)
+            topic=simpledialog.askstring('본문·이미지 전체 새로 만들기','새로 작성할 제목을 입력하세요. 입력한 제목을 그대로 사용합니다.\n새 본문과 이미지 2장을 만들고, 기존 글 번호·주소를 유지합니다.\n생성만으로 Blogger 글이 변경되지는 않습니다.',initialvalue=result.get('replacement_topic',result['before'].get('title','')),parent=dialog)
             if topic and topic.strip():self.start_ai('replace_all',{'proposal_id':pid,'topic':topic.strip()})
         replacement_controls=ttk.Frame(dialog);replacement_controls.pack(fill='x',padx=10,pady=5)
         ttk.Button(replacement_controls,text='본문·이미지 전체 새로 만들기',command=replace_all).pack(side='left')
         if result.get('replacement_job_id'):
             ttk.Button(replacement_controls,text='전체 교체 작업 이어서 진행',command=lambda:self.start_ai('replace_resume',{'proposal_id':pid}) if not self.busy else None).pack(side='left',padx=8)
         ttk.Button(replacement_controls,text='수정안 최종 검증',command=lambda:self.start_ai('repair_validate',{'proposal_id':pid,'slot':1}) if not self.busy else None).pack(side='right')
-        ttk.Label(dialog,text='기존 제목: '+result['before'].get('title','')+'\n새 제목: '+result.get('proposed_title',result['before'].get('title',''))+'\n기존 상태: '+result['before'].get('status','')+' · 예약/발행 시각: '+str(result['before'].get('published','미확인')),wraplength=1000).pack(fill='x',padx=10)
+        ttk.Label(dialog,text='기존 제목: '+result['before'].get('title','')+'\n입력한 새 주제 / 제목: '+result.get('replacement_topic','해당 없음')+'\n새 제목: '+(result.get('proposed_title') or '아직 생성되지 않음')+'\n기존 상태: '+result['before'].get('status','')+' · 예약/발행 시각: '+str(result['before'].get('published','미확인')),wraplength=1000).pack(fill='x',padx=10)
         from .gates import Document
         tabs=ttk.Notebook(dialog);tabs.pack(fill='both',expand=True,padx=10,pady=10)
         comparison=ttk.Frame(tabs);tabs.add(comparison,text='글·이미지 비교')
@@ -496,7 +529,10 @@ class App:
                 if action=='replace_post':result=service.start_post(value['post_id'],value['topic'],generator)
                 elif action=='replace_all':result=service.start(value['proposal_id'],value['topic'],generator)
                 else:result=service.resume(value['proposal_id'],generator)
-                task.finish('COMPLETED');self.events.put(('repair_ready',result));return
+                if not result.get('replacement_preview_ready'):
+                    task.finish('FAILED',json.dumps({'kind':'REPLACEMENT_HOLD','model':getattr(ai,'model',''),'stage':result.get('replacement_stage','생성 준비'),'summary':result.get('reason','생성 보류'),'action':'전체 교체 작업 불러오기에서 같은 작업을 이어서 진행하세요.'},ensure_ascii=False))
+                else:task.finish('COMPLETED')
+                self.events.put(('repair_ready',result));return
             if action.startswith('repair_image_') or action in ('repair_alt','repair_validate'):
                 from .repair_images import RepairImages
                 from .bridge import WriteBridgeAdapter
@@ -625,12 +661,12 @@ class App:
             finish_error(task,exc);self.events.put(('error',str(exc)))
         finally:
             if store: store.close()
-    def start(self):
+    def start(self,force=False):
         if self.busy: return
         self.new_task();self.busy=True; self.button.config(state='disabled'); demo=self.demo.get()
         self.set_status(text='데모 조회 중…' if demo else 'Blogger LIVE / SCHEDULED / DRAFT 조회 중…')
-        threading.Thread(target=self.worker,args=(demo,),daemon=True).start()
-    def worker(self,demo):
+        threading.Thread(target=self.worker,args=(demo,force),daemon=True).start()
+    def worker(self,demo,force=False):
         store=None;task=None
         from .tasks import TaskLog,finish_error,Cancelled
         try:
@@ -642,7 +678,7 @@ class App:
             blog_id='DEMO' if demo else adapter.blog_id
             self.cancel_token.checkpoint()
             from .cache_policy import force_whole_review
-            sync=self.sync_posts(store,adapter,blog_id);self.cancel_token.checkpoint(); checks=run_checks(store,blog_id,force_recheck=force_whole_review())
+            sync=self.sync_posts(store,adapter,blog_id,force=force);self.cancel_token.checkpoint(); checks=run_checks(store,blog_id,force_recheck=force_whole_review(force=force))
             from .cache_policy import remember_checkpoint
             remember_checkpoint(store,blog_id,sync,checks)
             rows=[]
@@ -676,7 +712,7 @@ class App:
                     continue
                 if event[0]=='progress':
                     self.set_status(text=event[1]);self.update_progress(event[1]); self.generation_notes.insert('end',event[1]+'\n'); self.generation_notes.see('end'); continue
-                if event[0] in ('google_done','publication_ready','repair_ready','ai_done','done'):
+                if event[0] in ('google_done','publication_ready','ai_done','done') or (event[0]=='repair_ready' and (event[1].get('mode')!='REPLACEMENT' or event[1].get('replacement_preview_ready'))):
                     self.progress_bar.config(value=9)
                 if event[0]=='google_done':
                     self.busy=False;self.button.config(state='normal');self.google_notes.delete('1.0','end')
@@ -687,7 +723,7 @@ class App:
                 if event[0]=='publication_ready':
                     self.busy=False;self.button.config(state='normal');self.generate_button.config(state='normal');self.show_publication(event[1],event[2]);continue
                 if event[0]=='repair_ready':
-                    self.busy=False;self.button.config(state='normal');self.generate_button.config(state='normal');self.show_repair(event[1]);continue
+                    self.busy=False;self.button.config(state='normal');self.generate_button.config(state='normal');self.show_repair(event[1]);self.set_status(text=event[1].get('reason','수정안 결과 확인'));continue
                 if event[0]=='ai_done':
                     self.busy=False; self.button.config(state='normal'); self.generate_button.config(state='normal')
                     if isinstance(event[1],dict) and event[1].get('audit_id') and event[1].get('status')=='VERIFIED':self.last_apply_id=event[1]['audit_id']
@@ -719,3 +755,4 @@ def main():
     from .startup import launch
     return launch()
 if __name__=='__main__': main()
+
