@@ -106,6 +106,7 @@ class Generation:
             except (EvidenceHold,KeyError,TypeError,ValueError):
                 payload['evidence']=Research(self.ai).collect(title,topic,self.progress)
             from .generation_evidence import prepare,writer_context
+            payload.pop('generation_evidence_recovery',None)
             def record_recovery(value):
                 payload['generation_evidence_recovery']=value
                 self.save(job,'새 글 원문 근거 재구성','RUNNING',payload)

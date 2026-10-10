@@ -49,6 +49,8 @@ def prepare(ai, pack, reader, title, topic, progress=lambda *a: None,
         writer_context(title, topic, pack)
         return pack
     except EvidenceHold as failure:
+        # Format failures say nothing about fact truth; do not replace the ledger.
+        if failure.diagnostic.get('reason')=='ORIGINAL_REVIEW_FORMAT':raise
         partial = getattr(failure, 'partial_pack', None)
         if partial:
             originals = partial.get('evidence_review', {}).get('originals', {})
@@ -63,7 +65,7 @@ def prepare(ai, pack, reader, title, topic, progress=lambda *a: None,
         if len(sources) < 2:
             raise
         captured = {s['id']: deepcopy(originals[s['id']]) for s in sources}
-        recovery = {'version': 75, 'attempt': 1, 'limit': 1, 'state': 'STARTED',
+        recovery = {'version': 76, 'attempt': 1, 'limit': 1, 'state': 'STARTED',
                     'started_at': now(), 'original_reason': str(failure),
                     'original_fact_count': len(pack['facts']), 'source_count': len(sources)}
         record(deepcopy(recovery))

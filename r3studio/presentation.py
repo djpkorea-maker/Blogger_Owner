@@ -129,6 +129,14 @@ def inspection_text(row):
 
 def diagnostic_lines(detail):
     lines=[]
+    if detail.get('response_shape_issues'):
+        lines.append('원문 검사 응답 형식 문제 · 사실 정확성 판정과 별도:')
+        lines.extend('• '+issue for issue in detail['response_shape_issues'])
+    for attempt in detail.get('response_format_attempts',[]):
+        state='형식 확인 완료 · 사실 검증은 별도' if attempt.get('state')=='VALID_SHAPE' else '형식 오류'
+        lines.append('원문 검사 응답 '+str(attempt['attempt'])+'차: '+state)
+        lines.extend('• '+issue for issue in attempt.get('issues',[]))
+    if detail.get('format_recovery_exhausted'):lines.append('같은 원문 형식 재검사 1회 한도 종료 · 본문 작성·발행 불가')
     if detail.get('missing_criteria'):lines.append('부족한 검사 기준: '+detail['missing_criteria'])
     budget=detail.get('research_budget',{})
     if budget:

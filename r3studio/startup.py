@@ -71,7 +71,7 @@ def smoke_test():
             os.environ['LOCALAPPDATA']=folder
             root=tk.Tk();root.withdraw()
             app=App(root)
-            if 'Dev75 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
+            if 'Dev76 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
             root.update_idletasks() # No scheduled startup/network callbacks.
             if len(app.tabs.tabs())!=3:raise RuntimeError('세 메뉴 화면 구성 실패')
             if len(app.inspect_panes.panes())!=2:raise RuntimeError('목록·상세 조절 창 구성 실패')
@@ -236,6 +236,17 @@ def smoke_test():
                             'claims':[{'fact_id':f['id'],'source_id':f['source_ids'][0],'quote':quote,'supported':f['text'].startswith(quote)} for f in data['facts']]}
             original_ai=OriginalAI();original_reader=OriginalReader();refilled=prepare(original_ai,unsupported,original_reader,'안전 점검','안전 점검')
             if original_ai.refills!=1 or original_reader.calls!=1 or '근거 없는' in json.dumps(writer_context('안전 점검','안전 점검',refilled),ensure_ascii=False):raise RuntimeError('원문 기반 새 글 근거 재구성 실패')
+            # Exercise the real JSON client/schema/retry path in each frozen EXE.
+            from .ai import Gemini
+            from .origin_response import request_review,SCHEMA
+            calls=[]
+            context={'facts':refilled['facts'],'sources':refilled['sources'],'originals':refilled['original_verification']['originals']}
+            def format_transport(payload):
+                calls.append(payload)
+                value={'claims':{}} if len(calls)==1 else original_ai.object('claims:[{fact_id\n'+json.dumps(context,ensure_ascii=False))
+                return {'outputs':[{'type':'text','text':json.dumps(value,ensure_ascii=False)}]}
+            response,trace=request_review(Gemini('local-smoke-test-only','mock',format_transport),context)
+            if len(calls)!=2 or trace[-1]['state']!='VALID_SHAPE' or any(c['response_format']['schema']!=SCHEMA for c in calls):raise RuntimeError('원문 검사 필수 스키마·형식 재검사 실패')
             settings=Settings(Path(folder)/'smoke-settings.json')
             settings.save({'R3_BRIDGE_SECRET':'local-smoke-test-only','R3_START_MODE':'DEMO'})
             if settings.load().get('R3_BRIDGE_SECRET')!='local-smoke-test-only':raise RuntimeError('DPAPI 복호화 시험 실패')

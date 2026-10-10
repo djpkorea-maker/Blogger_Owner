@@ -92,14 +92,16 @@ class Gemini:
             raise AIError('AI 네트워크 연결 실패: 인터넷 연결을 확인하세요.',{'reason':'NETWORK','model':self.model,'summary':'네트워크 연결 실패','action':'인터넷 연결을 확인하세요.'}) from None
         except ValueError:
             raise AIError('AI 서버 응답 형식 오류: 정상 JSON 응답을 받지 못했습니다.',{'reason':'INVALID_JSON','model':self.model,'summary':'서버 응답 형식 오류','action':'잠시 후 재검사하세요.'}) from None
-    def ask(self,prompt,search=False,json_output=False,timeout_seconds=None):
+    def ask(self,prompt,search=False,json_output=False,timeout_seconds=None,output_schema=None):
         payload={'model':self.model,'input':prompt,'store':False}
         if search:
             payload['tools']=[{'type':'google_search'}]
             # Only the officially documented Flash model's retrieval phase uses low thinking.
             # Factual, image and final quality judgments keep their normal settings.
             if self.model=='gemini-3.8-flash':payload['generation_config']={'thinking_level':'low'}
-        if json_output: payload['response_format']={'type':'text','mime_type':'application/json','schema':{'type':'object','additionalProperties':True}}
+        if output_schema is not None and (not json_output or not isinstance(output_schema,dict)):
+            raise ValueError('구조화 응답 스키마 설정 오류')
+        if json_output: payload['response_format']={'type':'text','mime_type':'application/json','schema':output_schema if output_schema is not None else {'type':'object','additionalProperties':True}}
         limit=self.REQUEST_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
         if type(limit) is not int or not 20<=limit<=self.REQUEST_TIMEOUT_SECONDS:raise ValueError('AI 요청 대기 설정 범위 오류')
         previous_timeout=self.request_timeout_seconds;self.request_timeout_seconds=limit
@@ -126,13 +128,16 @@ class Gemini:
     def object(self,prompt):
         response=self.ask(prompt+'\n응답은 JSON 객체 하나만 반환하세요. 코드 블록 및 해설은 제외합니다.',json_output=True)
         return self.parse_object(response['text'])
+    def structured_object(self,prompt,schema):
+        response=self.ask(prompt+'\n지정한 스키마의 JSON 객체 하나만 반환하세요. 코드 블록 및 해설은 제외합니다.',json_output=True,output_schema=schema)
+        return self.parse_object(response['text'])
     @staticmethod
     def parse_object(text):
         text=text.strip()
         if text.startswith('```'): text=re.sub(r'^```(?:json)?\s*|\s*```$','',text)
         try: obj=json.loads(text)
-        except ValueError: raise AIError('AI 구조화 응답 오류: 검증 보류') from None
-        if not isinstance(obj,dict): raise AIError('AI 응답 객체 형식 오류')
+        except ValueError: raise AIError('AI 구조화 응답 오류: 검증 보류',{'reason':'STRUCTURED_OUTPUT_FORMAT','summary':'구조화 응답 JSON 해석 실패','format_issue':'JSON_SYNTAX'}) from None
+        if not isinstance(obj,dict): raise AIError('AI 응답 객체 형식 오류',{'reason':'STRUCTURED_OUTPUT_FORMAT','summary':'구조화 응답 객체 형식 오류','format_issue':'ROOT_NOT_OBJECT'})
         return obj
 
     def image_object(self,prompt,image_bytes,mime):
