@@ -1,6 +1,7 @@
 """Generate a complete replacement tied to one existing post, never a new post."""
 import json
 from pathlib import Path
+from copy import deepcopy
 from .sync import now,digest,post_hash
 from .generation import Generation
 from .recovery import Recovery
@@ -44,13 +45,8 @@ def saved_replacements(store,blog_id):
     return result
 
 def text_ready(payload):
-    from .deep import REQUIRED
-    review=payload.get('deep',{}).get('review',{})
-    allowed={'이미지 2장 미만','내부링크 확인 필요','외부 근거 링크 확인 필요'}
-    return (isinstance(review,dict) and all(review.get(k)=='PASS' for k in REQUIRED)
-        and type(review.get('score')) in (int,float) and review['score']>=85
-        and review.get('severity')=='none' and not review.get('issues') and not review.get('findings') and not review.get('unsupported_claims')
-        and not (set(payload.get('fast',{}).get('issues',[]))-allowed))
+    from .text_flow import ready
+    return ready(payload)
 
 class Replacement:
     def __init__(self,store,adapter,ai,cache_dir,progress=lambda *a:None):
@@ -108,8 +104,14 @@ class Replacement:
             payload=g.load_job(job)['payload'];target=replacement_target(self.store,self.adapter.blog_id,payload)
             if target['proposal_id']!=pid:raise ImageHold('다른 수정안의 생성 작업: 진행 중지')
             self.progress('전체 교체 본문 생성',0,1)
+            from .text_flow import continue_saved
             if not text_ready(payload):
-                try:g.resume(job)
+                try:
+                    if payload.get('content'):continue_saved(g,job)
+                    else:
+                        g.resume(job)
+                        generated=g.load_job(job)['payload']
+                        if generated.get('content') and not text_ready(generated):continue_saved(g,job,use_current_review=True)
                 finally:
                     # Generation persists partial results even on cancellation/errors.
                     self.capture(pid,p,g,job)
@@ -125,7 +127,8 @@ class Replacement:
                 g.save(job,'전체 교체 링크 배치','HOLD',payload)
             candidates=payload.get('image_candidates',[])
             if len(candidates)!=2 or any(c.get('result')!='PASS' for c in candidates):
-                generate_candidates(g,generator,job,self.cache)
+                try:generate_candidates(g,generator,job,self.cache)
+                finally:self.capture(pid,p,g,job)
                 payload=g.load_job(job)['payload'];candidates=payload.get('image_candidates',[])
             # Local preview placeholders are never considered public image URLs.
             content=payload['content']
@@ -164,6 +167,10 @@ class Replacement:
     def capture(self,pid,p,g,job):
         record=g.load_job(job);payload=record['payload']
         p['replacement_stage']=record['stage']
+        for key in ('text_versions','text_review_history','text_repair_attempts','image_candidates'):
+            if payload.get(key):p[key]=deepcopy(payload[key])
+        if payload.get('deep'):p['generation_text_review']=deepcopy(payload['deep'])
+        else:p.pop('generation_text_review',None)
         if payload.get('generation_evidence_recovery'):
             p['generation_evidence_recovery']=payload['generation_evidence_recovery']
         if not payload.get('content') and not payload.get('draft_content'):p.pop('proposed_content',None)

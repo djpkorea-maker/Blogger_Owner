@@ -129,6 +129,9 @@ def inspection_text(row):
 
 def diagnostic_lines(detail):
     lines=[]
+    if detail.get('text_review'):
+        from .text_flow import review_lines
+        lines.extend(review_lines(detail['text_review']))
     counts=detail.get('coverage',{})
     if counts:
         lines.append(f"본문 작성용 실제 근거: 목록 {counts['listed_sources']}개 / 원문 확보 {counts['fetched_sources']}개 / 지원 연결 {counts['used_sources']}개 / 독립 도메인 {counts['used_domains']}개")

@@ -144,7 +144,15 @@ class Generation:
             if target:
                 # Images and links are prepared after this text-only gate.
                 text_fast={**text_fast,'issues':[i for i in text_fast.get('issues',[]) if i not in ('이미지 2장 미만','내부링크 확인 필요','외부 근거 링크 확인 필요')]}
-            payload['deep']=evaluate(self.ai,post,payload['evidence'],text_fast)
+            payload['deep']=evaluate(self.ai,post,payload['evidence'],text_fast,text_only=bool(target))
+            if target:
+                from .text_flow import POLICY,basis,ready,diagnosis,checkpoint
+                checkpoint(payload,'최초 작성 본문 보존')
+                payload['text_gate_policy']=POLICY;payload['text_review_hash']=basis(payload)
+                if not ready(payload):
+                    payload['error_diagnostic']=diagnosis(payload);payload['reason']=payload['error_diagnostic']['summary']
+                    self.save(job,'본문 품질 보완 필요','HOLD',payload)
+                    return {'job_id':job,'status':'HOLD','stage':'본문 품질 보완 필요','reason':payload['reason']}
             stage='이미지·링크 검사 대기'
             # Missing image, caption, link verification always blocks output.
             payload['reason']='이미지 픽셀 QA·ALT·caption·링크 검증 및 최종 검사 미완료'

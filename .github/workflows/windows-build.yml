@@ -41,7 +41,7 @@ jobs:
       - name: Retain unverified development bundle
         uses: actions/upload-artifact@v4
         with:
-          name: R3-Windows-UNVERIFIED
+          name: R3_0_Windows_Dev78_Test
           path: release/R3_0_Windows_Dev_*/
           if-no-files-found: error
           retention-days: 7

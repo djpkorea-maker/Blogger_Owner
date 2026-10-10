@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev77 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev78 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -281,13 +281,19 @@ class App:
         ttk.Button(replacement_controls,text='본문·이미지 전체 새로 만들기',command=replace_all).pack(side='left')
         if result.get('replacement_job_id'):
             ttk.Button(replacement_controls,text='전체 교체 작업 이어서 진행',command=lambda:self.start_ai('replace_resume',{'proposal_id':pid}) if not self.busy else None).pack(side='left',padx=8)
-        ttk.Button(replacement_controls,text='수정안 최종 검증',command=lambda:self.start_ai('repair_validate',{'proposal_id':pid,'slot':1}) if not self.busy else None).pack(side='right')
+        ttk.Button(replacement_controls,text='수정안 최종 검증',state='disabled' if result.get('mode')=='REPLACEMENT' and not result.get('replacement_preview_ready') else 'normal',command=lambda:self.start_ai('repair_validate',{'proposal_id':pid,'slot':1}) if not self.busy else None).pack(side='right')
         title=result.get('proposed_title') or result.get('plan',{}).get('proposal',{}).get('title') or ('아직 생성되지 않음' if result.get('mode')=='REPLACEMENT' else result['before'].get('title',''))
         requested='\n입력한 새 제목: '+result.get('replacement_topic','') if result.get('mode')=='REPLACEMENT' else ''
         ttk.Label(dialog,text='기존 제목: '+result['before'].get('title','')+requested+'\n수정안 제목: '+title+'\n기존 상태: '+result['before'].get('status','')+' · 예약/발행 시각: '+str(result['before'].get('published','미확인')),wraplength=1000).pack(fill='x',padx=10)
         from .gates import Document
         tabs=ttk.Notebook(dialog);tabs.pack(fill='both',expand=True,padx=10,pady=10)
         comparison=ttk.Frame(tabs);tabs.add(comparison,text='글·이미지 비교')
+        if result.get('mode')=='REPLACEMENT':
+            from .text_flow import report
+            diagnosis_tab=ttk.Frame(tabs);tabs.add(diagnosis_tab,text='본문 검사·보완 기록')
+            detail=ScrolledText(diagnosis_tab,wrap='word');detail.pack(fill='both',expand=True)
+            detail.insert('end',report(result));detail.config(state='disabled')
+
         if editor is None or not editor.winfo_exists():
             editor=tk.Toplevel(self.root);editor.geometry('950x760');editor.withdraw();dialog.image_editor=editor
         for child in editor.winfo_children():child.destroy()
@@ -555,7 +561,7 @@ class App:
                 elif action=='replace_all':result=service.start(value['proposal_id'],value['topic'],generator)
                 else:result=service.resume(value['proposal_id'],generator)
                 if not result.get('replacement_preview_ready'):
-                    task.finish('FAILED',json.dumps({'kind':'REPLACEMENT_HOLD','model':getattr(ai,'model',''),'stage':result.get('replacement_stage','생성 준비'),'summary':result.get('reason','생성 보류'),'action':'전체 교체 작업 불러오기에서 같은 작업을 이어서 진행하세요.'},ensure_ascii=False))
+                    task.finish('FAILED',json.dumps({**result.get('error_diagnostic',{}),'kind':'REPLACEMENT_HOLD','model':getattr(ai,'model',''),'stage':result.get('replacement_stage','생성 준비'),'summary':result.get('reason','생성 보류'),'action':'본문 검사·보완 기록에서 미통과 항목과 문장을 확인하고 같은 작업을 이어서 진행하세요.'},ensure_ascii=False))
                 else:task.finish('COMPLETED')
                 self.events.put(('repair_ready',result));return
             if action.startswith('repair_image_') or action in ('repair_alt','repair_validate'):
