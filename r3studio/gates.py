@@ -96,7 +96,7 @@ def fast_check(post,others=()):
     # Formal checks alone cannot prove factual safety, utility or pixel relevance.
     return Result(grade,'DEEP' if issues else 'EVIDENCE_REUSE_OR_DEEP',issues,metrics)
 
-def run_checks(store,blog_id):
+def run_checks(store,blog_id,force_recheck=False):
     from .sync import digest
     db=store.db
     rows=[dict(row) for row in db.execute('SELECT * FROM posts WHERE blog_id=? AND present=1',(blog_id,))]
@@ -110,7 +110,7 @@ def run_checks(store,blog_id):
     with db:
         for row in rows:
             old=db.execute('SELECT grade,details,checked_at FROM recovery_checks WHERE blog_id=? AND post_id=? AND content_hash=? AND engine_version=? ORDER BY id DESC LIMIT 1',(blog_id,row['post_id'],row['content_hash'],ENGINE_VERSION)).fetchone()
-            result=cached_fast(old['details']) if old else None
+            result=cached_fast(old['details']) if old and not force_recheck else None
             if result is not None:
                 counts['reused']+=1
                 db.execute('UPDATE posts SET grade=?,last_checked=? WHERE blog_id=? AND post_id=?',(result.grade,old['checked_at'],blog_id,row['post_id']))
@@ -120,7 +120,7 @@ def run_checks(store,blog_id):
                 db.execute('UPDATE posts SET grade=?,last_checked=? WHERE blog_id=? AND post_id=?',(result.grade,stamp,blog_id,row['post_id']))
                 counts['checked']+=1
             cached=db.execute('SELECT corpus_hash FROM duplicate_checks WHERE blog_id=? AND post_id=?',(blog_id,row['post_id'])).fetchone()
-            if not cached or cached['corpus_hash']!=corpus:
+            if force_recheck or not cached or cached['corpus_hash']!=corpus:
                 current=indexed[row['post_id']]; matches=[]
                 for pid,prior in indexed.items():
                     if pid==row['post_id']: continue
@@ -129,7 +129,7 @@ def run_checks(store,blog_id):
                 db.execute('INSERT OR REPLACE INTO duplicate_checks VALUES(?,?,?,?)',(blog_id,row['post_id'],corpus,json.dumps(matches,ensure_ascii=False)))
             counts['deep_needed']+=int(result.route!='ANOMALY')
             full=db.execute('SELECT * FROM recovery_checks WHERE blog_id=? AND post_id=? AND content_hash=? AND engine_version LIKE "R3.0-existing-%" ORDER BY id DESC LIMIT 1',(blog_id,row['post_id'],row['content_hash'])).fetchone()
-            if full and result.route!='ANOMALY':
+            if full and not force_recheck and result.route!='ANOMALY':
                 from .freshness import is_fresh
                 try:details=json.loads(full['details'])
                 except (ValueError,TypeError):details={}

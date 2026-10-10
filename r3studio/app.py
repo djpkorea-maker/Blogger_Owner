@@ -21,7 +21,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · 개발본'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev61 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -79,7 +79,7 @@ class App:
         self.google_notes=ScrolledText(self.google,wrap='word');self.google_notes.pack(fill='both',expand=True)
         controls=ttk.Frame(self.inspect); controls.pack(fill='x')
         self.button=ttk.Button(controls,text='LIVE 동기화 + Fast 검사',command=self.start); self.button.pack(side='left')
-        ttk.Label(controls,text='일반 조회는 읽기 전용').pack(side='left',padx=15)
+        ttk.Label(controls,text='시험판: 매번 전체 조회·Fast 재검사').pack(side='left',padx=15)
         ttk.Button(controls,text='수정안 만들기',command=self.start_repair).pack(side='left')
         ttk.Button(controls,text='수정·복원 결과 확인',command=self.start_apply_reconcile).pack(side='left',padx=5)
         ttk.Button(controls,text='수정 백업 복원',command=self.start_rollback).pack(side='left',padx=5)
@@ -101,7 +101,7 @@ class App:
         def progress(stage,index,total):
             text=f'{stage} {index}/{total}' if total else f'{stage} · {index}개 확인'
             self.events.put(('progress',text))
-        return Sync(store,adapter,blog_id,progress,self.cancel_token.checkpoint).run()
+        return Sync(store,adapter,blog_id,progress,self.cancel_token.checkpoint,force_refresh=True).run()
     def cancel_current(self):
         if self.busy:
             self.cancel_token.request();self.set_status(text='중단 요청됨 · 진행 중인 요청 결과 확인 후 멈춥니다.')
@@ -277,10 +277,10 @@ class App:
         self.set_status(text='작업 준비 중…')
         threading.Thread(target=self.ai_worker,args=(action,value),daemon=True).start()
     def ai_worker(self,action,value):
-        store=None;task=None;adapter=None
+        store=None;task=None;adapter=None;current_stage=['연결 준비']
         from .tasks import TaskLog,finish_error
         try:
-            from .ai import Gemini
+            from .ai import Gemini,AIError as GeminiError
             from .evidence import collect_cached
             from .generation import Generation
             store=Store(str(self.base/'studio.sqlite3'));task=TaskLog(store,{'generate':'새 글 생성','images':'이미지 후보 검사','repair':'기존 글 수정안 생성','apply_repair':'수정안 적용','rollback':'백업 복원','jobs':'보류 목록 조회','load_job':'저장 작업 조회','resume':'이어서 작성','finalize':'최종 검사','generate_images':'이미지 자동 생성','upload_images':'이미지 업로드','draft':'초안 저장','publish':'공개 발행','schedule':'예약 저장','deep':'심층 검사','reconcile':'이전 저장 결과 재확인','reconcile_apply':'수정 결과 확인','reconcile_images':'이미지 업로드 결과 확인','execute_plan':'검토한 저장 계획 실행'}.get(action,'작업'))
@@ -296,14 +296,24 @@ class App:
             if action in AI_ACTIONS:
                 ai=Gemini.from_environment()
                 transport=ai.transport
-                def guarded_ai(request):self.cancel_token.checkpoint();return transport(request)
+                def guarded_ai(request):
+                    self.cancel_token.checkpoint()
+                    self.events.put(('progress',current_stage[0]+' · AI 응답 대기 중 (요청 대기 설정 120초)'))
+                    try:result=transport(request)
+                    except GeminiError as exc:
+                        if exc.diagnostic:
+                            exc.diagnostic['stage']=current_stage[0]
+                            exc.args=(str(exc)+'\n중단 단계: '+current_stage[0],)
+                        raise
+                    self.cancel_token.checkpoint();return result
                 ai.transport=guarded_ai
             def progress(stage,index,total):
+                current_stage[0]=stage
                 self.cancel_token.checkpoint();self.events.put(('progress',f'{stage} {index}/{total}'))
             # Refresh Blogger before sending local content to any generation/check request.
             self.events.put(('progress','최신 Blogger 상태 동기화 중…'))
             self.cancel_token.checkpoint()
-            self.sync_posts(store,adapter,adapter.blog_id);self.cancel_token.checkpoint(); run_checks(store,adapter.blog_id)
+            self.sync_posts(store,adapter,adapter.blog_id);self.cancel_token.checkpoint(); run_checks(store,adapter.blog_id,force_recheck=True)
             if action in ('repair','apply_repair','rollback','reconcile_apply'):
                 from .recovery import Recovery,rollback_verified
                 from .bridge import WriteBridgeAdapter
@@ -409,7 +419,7 @@ class App:
             adapter=DemoAdapter() if demo else BridgeAdapter.from_environment()
             blog_id='DEMO' if demo else adapter.blog_id
             self.cancel_token.checkpoint()
-            sync=self.sync_posts(store,adapter,blog_id);self.cancel_token.checkpoint(); checks=run_checks(store,blog_id)
+            sync=self.sync_posts(store,adapter,blog_id);self.cancel_token.checkpoint(); checks=run_checks(store,blog_id,force_recheck=True)
             rows=[]
             for row in store.db.execute('SELECT * FROM posts WHERE blog_id=? AND present=1 ORDER BY CASE WHEN grade LIKE "EMPTY%" OR grade="INCOMPLETE_DRAFT" THEN 0 WHEN status="SCHEDULED" THEN 1 ELSE 2 END,post_id',(blog_id,)):
                 data=dict(row); latest=store.db.execute('SELECT details FROM recovery_checks WHERE blog_id=? AND post_id=? ORDER BY id DESC LIMIT 1',(blog_id,data['post_id'])).fetchone()

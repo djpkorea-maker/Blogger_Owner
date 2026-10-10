@@ -25,6 +25,12 @@ class DiagnosticsTests(unittest.TestCase):
     with self.assertRaises(AIError) as raised:Gemini('secret','test-model').ask('text')
    self.assertEqual(raised.exception.diagnostic['reason'],reason)
    self.assertNotIn('secret',str(raised.exception))
+ def test_timeout_setting_and_elapsed_diagnostics_without_retry(self):
+  with patch('urllib.request.urlopen',side_effect=TimeoutError()) as request,patch('r3studio.ai.time.monotonic',side_effect=[10,130]):
+   with self.assertRaises(AIError) as raised:Gemini('secret','test-model').ask('text',search=True)
+  self.assertEqual(request.call_count,1);self.assertEqual(request.call_args.kwargs['timeout'],120)
+  self.assertEqual(raised.exception.diagnostic['elapsed_seconds'],120)
+  self.assertEqual(raised.exception.diagnostic['request_type'],'검색 근거 조사')
  def test_safe_diagnostics_survive_task_history(self):
   with tempfile.TemporaryDirectory() as d:
    store=Store(d+'/db');task=TaskLog(store,'심층 검사')

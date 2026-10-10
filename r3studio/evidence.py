@@ -38,9 +38,11 @@ class Research:
         for attempt in range(3):
             progress('Evidence 조사',attempt+1,3)
             if search_needed:
+                progress('근거 검색',attempt+1,3)
                 response=self.ai.ask('공식 제조사 설명서·공공기관·표준 원문 중심으로 다음 질문을 조사하세요. 추측을 제외하고 수치의 조건과 예외를 밝히세요.\n'+json.dumps({'title':title,'topic':topic,'missing':notes},ensure_ascii=False),search=True)
                 if not isinstance(response,dict) or not response.get('citations'):raise EvidenceHold('RESEARCH_SYSTEM_ERROR: 실제 검색 출처 없음',trace)
                 collected.append(response)
+            progress('근거 장부 작성',attempt+1,3)
             pack=self.ai.object('아래 검색 결과만 사용하여 근거 장부를 만드세요. sources:[{id,url,grade:A|B|C,reason}], facts:[{id,text,source_ids,core:boolean,kind:core|practical|condition|other}]. A는 공식 원문, B는 신뢰할 수 있는 전문자료입니다. 출처 등급을 부풀리지 마세요.\n'+json.dumps({'search_results':collected,'correction':notes},ensure_ascii=False))
             try:
                 validate_pack(pack)

@@ -27,7 +27,7 @@ def history_text(rows):
             detail=json.loads(row['details'])
         except (ValueError,TypeError,KeyError):detail=None
         if isinstance(detail,dict):
-            for key,label in [('http_status','HTTP 오류 코드'),('reason','오류 분류'),('model','사용 모델'),('summary','원인'),('action','다음 조치'),('retry_after_seconds','재시도 대기(초)')]:
+            for key,label in [('http_status','HTTP 오류 코드'),('reason','오류 분류'),('model','사용 모델'),('summary','원인'),('action','다음 조치'),('retry_after_seconds','재시도 대기(초)'),('stage','중단 단계'),('request_type','요청 종류'),('elapsed_seconds','해당 요청 대기(초)'),('timeout_seconds','요청 대기 설정(초)')]:
                 if detail.get(key) is not None:lines.append(label+': '+str(detail[key]))
         elif row['status']=='FAILED':lines.append('이전 기록에는 상세 원인이 없습니다. 보완 버전으로 재검사해야 확인할 수 있습니다.')
     return '\n\n'.join(lines) or '저장된 작업 기록이 없습니다.'
@@ -38,6 +38,8 @@ def inspection_summary(sync,checks,rows,demo=False):
     grades=' / '.join(f'{grade} {counts[grade]}' for grade in ('PASS','A','B','C','SCHEDULED_PASS','SCHEDULED_HOLD') if counts[grade])
     empty=sum(n for grade,n in counts.items() if grade.startswith('EMPTY'))
     pending=sum(n for grade,n in counts.items() if grade in ('NEEDS_DEEP','NEEDS_EVIDENCE','TEXT_PASS_IMAGE_PENDING','INCOMPLETE_DRAFT'))
+    if sync.get('full_test_review'):
+        return f"시험판 전체 재검사 · 조회 {sync['listed']} / 본문 새로 조회 {sync['refetched']} / 실제 변경 {sync['changed']} / Fast 재검사 {checks['checked']} / 검사 재사용 {checks['reused']}\n"+(grades+' / ' if grades else '')+f'누락 {empty} / 검증 미완료 {pending} · AI 심층 검사는 별도 선택'
     return f"{'데모 · ' if demo else ''}조회 {sync['listed']} / 변경 {sync['changed']} / 본문 재사용 {sync['reused']} / 검사 {checks['checked']} / 검사 재사용 {checks['reused']}\n"+(grades+' / ' if grades else '')+f'누락 {empty} / 검증 미완료 {pending}'
 
 def google_text(result):
@@ -76,7 +78,7 @@ def inspection_text(row):
     if row.get('status')=='SCHEDULED':lines.append('예약 보호: HOLD 표시는 Blogger의 실제 예약을 중지하지 않습니다.')
     if row['grade'].startswith('EMPTY'):
         lines.append('제목/본문 누락: 실제 Blogger 재조회 후 보관·복원·삭제 여부를 검토하세요. 자동 삭제하지 않습니다.')
-    if metrics:
+    if metrics.get('text_length') is not None:
         lines.append(f"빠른 검사 완료: 본문 {metrics.get('text_length','?')}자 / 이미지 {metrics.get('images','?')}개 / 내부링크 {metrics.get('internal_links','?')}개 / 외부링크 {metrics.get('external_links','?')}개")
     labels={'fact':'사실 정확성','safety':'안전성','intent':'검색 의도','practical_value':'실용성','originality':'독창성'}
     states={'PASS':'통과','FAIL':'문제 발견','UNKNOWN':'확인 불가'}

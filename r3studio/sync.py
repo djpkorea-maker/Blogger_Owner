@@ -82,8 +82,9 @@ COMMIT;
     def close(self):self.db.close()
 
 class Sync:
-    def __init__(self,store,adapter,blog_id,progress=None,checkpoint=None):
+    def __init__(self,store,adapter,blog_id,progress=None,checkpoint=None,force_refresh=False):
         self.store,self.adapter,self.blog_id=store,adapter,str(blog_id)
+        self.force_refresh=force_refresh
         self.progress=progress or (lambda *args:None)
         self.checkpoint=checkpoint or (lambda:None)
     def run(self):
@@ -99,7 +100,7 @@ class Sync:
             self.checkpoint()
             ids=[str(p['id']) for p in metadata]
             if len(ids)!=len(set(ids)): raise ValueError('Duplicate IDs: incomplete or inconsistent listing')
-            prepared=[]; reused=0
+            prepared=[]; reused=0;changed_ids=set()
             for index,meta in enumerate(metadata,1):
                 self.checkpoint()
                 pid=str(meta['id']); status=str(meta['status']).upper(); updated=meta.get('updated')
@@ -107,7 +108,7 @@ class Sync:
                 old=db.execute('SELECT * FROM posts WHERE blog_id=? AND post_id=?',(self.blog_id,pid)).fetchone()
                 metadata_matches=old is not None and all(
                     old[field]==meta[field] for field in ('title','url') if field in meta)
-                if old and old['present'] and old['updated']==updated and old['status']==status and metadata_matches:
+                if not self.force_refresh and old and old['present'] and old['updated']==updated and old['status']==status and metadata_matches:
                     reused+=1
                     self.progress('Blogger 본문 비교',index,len(metadata))
                     continue
@@ -118,6 +119,8 @@ class Sync:
                     or any(post.get(field,'')!=meta[field] for field in ('title','url') if field in meta)):
                     raise ValueError('Post changed during sync; retry with fresh metadata')
                 post=dict(post,status=status); prepared.append(post)
+                if not old or not old['present'] or old['content_hash']!=post_hash(post) or old['updated']!=post['updated'] or old['url']!=post.get('url',''):
+                    changed_ids.add(pid)
                 self.progress('Blogger 본문 비교',index,len(metadata))
             self.checkpoint()
             with db:
@@ -125,9 +128,12 @@ class Sync:
                 for pid in ids: db.execute('UPDATE posts SET present=1 WHERE blog_id=? AND post_id=?',(self.blog_id,pid))
                 for post in prepared:
                     h=post_hash(post); im=digest(Body(post.get('content','')).images)
-                    db.execute('INSERT INTO post_versions(blog_id,post_id,captured_at,payload,content_hash) VALUES(?,?,?,?,?)',(self.blog_id,str(post['id']),stamp,json.dumps(post,ensure_ascii=False),h))
+                    # Unchanged reads are not an ever-growing version history.
+                    if str(post['id']) in changed_ids:
+                        db.execute('INSERT INTO post_versions(blog_id,post_id,captured_at,payload,content_hash) VALUES(?,?,?,?,?)',(self.blog_id,str(post['id']),stamp,json.dumps(post,ensure_ascii=False),h))
                     db.execute('INSERT OR REPLACE INTO posts VALUES(?,?,?,?,?,?,?,?,?,?,?,1)',(self.blog_id,str(post['id']),post['status'],post['updated'],post.get('title',''),post.get('url',''),post.get('content',''),h,im,anomaly(post),None))
-                result={'listed':len(ids),'changed':len(prepared),'reused':reused}
+                result={'listed':len(ids),'changed':len(changed_ids),'reused':reused}
+                if self.force_refresh:result.update(refetched=len(prepared),full_test_review=True)
                 db.execute('UPDATE sync_runs SET finished_at=?,status=?,details=? WHERE id=?',(now(),'DONE',json.dumps(result),run_id))
             return result
         except Exception as exc:

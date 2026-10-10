@@ -5,6 +5,7 @@ import re
 import urllib.request
 import urllib.error
 import socket
+import time
 
 class AIError(RuntimeError):
     def __init__(self,message,diagnostic=None):
@@ -61,6 +62,7 @@ def output_blocks(raw):
     return blocks
 
 class Gemini:
+    REQUEST_TIMEOUT_SECONDS=120
     def __init__(self,key,model,transport=None):
         if not key or not re.fullmatch(r'[A-Za-z0-9._-]+',model):
             raise AIError('Gemini API 키와 모델명을 설정하세요.')
@@ -71,7 +73,7 @@ class Gemini:
     def _http(self,payload):
         req=urllib.request.Request('https://generativelanguage.googleapis.com/v1beta/interactions',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','x-goog-api-key':self.key},method='POST')
         try:
-            with urllib.request.urlopen(req,timeout=55) as res:
+            with urllib.request.urlopen(req,timeout=self.REQUEST_TIMEOUT_SECONDS) as res:
                 data=res.read(8*1024*1024+1)
                 if len(data)>8*1024*1024: raise AIError('AI 응답 크기 초과')
                 return json.loads(data)
@@ -93,7 +95,16 @@ class Gemini:
         payload={'model':self.model,'input':prompt,'store':False}
         if search: payload['tools']=[{'type':'google_search'}]
         if json_output: payload['response_format']={'type':'text','mime_type':'application/json','schema':{'type':'object','additionalProperties':True}}
-        raw=self.transport(payload)
+        started=time.monotonic()
+        try:raw=self.transport(payload)
+        except AIError as exc:
+            if exc.diagnostic:
+                request_type='검색 근거 조사' if search else '이미지 검사' if isinstance(prompt,list) else '구조화 검사' if json_output else '본문 응답'
+                elapsed=round(time.monotonic()-started,1)
+                exc.diagnostic.update(request_type=request_type,elapsed_seconds=elapsed,timeout_seconds=self.REQUEST_TIMEOUT_SECONDS)
+                exc.args=(str(exc)+f'\n요청 종류: {request_type} / 대기 {elapsed}초 / 요청 대기 설정 {self.REQUEST_TIMEOUT_SECONDS}초',)
+            raise
+
         blocks=output_blocks(raw)
         text='\n'.join(b.get('text','') for b in blocks if b.get('type')=='text')
         citations=[]
