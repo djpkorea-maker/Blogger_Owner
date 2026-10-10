@@ -10,15 +10,18 @@ def writer_context(title, topic, pack):
     """Expose supported facts and their literal quotes, never research summaries."""
     validate_pack(pack)
     require_originals(pack)
+    from .generation_recovery import backed, coverage
     verification = pack['original_verification']
-    supported = {c['fact_id'] for c in verification['claims']}
-    facts = [deepcopy(f) for f in pack['facts'] if f['id'] in supported]
-    source_ids = {sid for f in facts for sid in f['source_ids']
-                  if sid in verification['trusted_sources']}
+    facts = backed(pack)
+    source_ids = {sid for fact in facts for sid in fact['source_ids']}
     sources = [deepcopy(s) for s in pack['sources'] if s['id'] in source_ids]
-    for fact in facts:
-        fact['source_ids'] = [sid for sid in fact['source_ids'] if sid in source_ids]
-    validate_pack({'sources': sources, 'facts': facts})
+    try:
+        validate_pack({'sources': sources, 'facts': facts})
+    except EvidenceHold as exc:
+        exc.diagnostic = coverage(pack)
+        exc.diagnostic['summary'] = str(exc)
+        raise
+    supported = {fact['id'] for fact in facts}
     quotes = [deepcopy(c) for c in verification['claims'] if c['fact_id'] in supported]
     return {'title': title, 'topic': topic,
             'evidence': {'sources': sources, 'facts': facts, 'verified_quotes': quotes}}
@@ -63,9 +66,10 @@ def prepare(ai, pack, reader, title, topic, progress=lambda *a: None,
                    and isinstance(originals[s['id']].get('text'), str)
                    and originals[s['id']].get('text_hash') == digest(originals[s['id']]['text'])]
         if len(sources) < 2:
-            raise
+            from .generation_recovery import supplement
+            return supplement(ai, partial or pack, reader, title, topic, failure, progress, record)
         captured = {s['id']: deepcopy(originals[s['id']]) for s in sources}
-        recovery = {'version': 76, 'attempt': 1, 'limit': 1, 'state': 'STARTED',
+        recovery = {'version': 77, 'attempt': 1, 'limit': 1, 'state': 'STARTED',
                     'started_at': now(), 'original_reason': str(failure),
                     'original_fact_count': len(pack['facts']), 'source_count': len(sources)}
         record(deepcopy(recovery))
@@ -106,4 +110,10 @@ def prepare(ai, pack, reader, title, topic, progress=lambda *a: None,
             # Preserve a new incomplete ledger for diagnostics/resume, never mark it PASS.
             if candidate is not None:
                 exc.recovery_pack = deepcopy(getattr(exc, 'partial_pack', candidate))
+            if isinstance(exc, EvidenceHold) and exc.diagnostic.get('reason') != 'ORIGINAL_REVIEW_FORMAT':
+                from .generation_recovery import supplement
+                best = (getattr(exc, 'partial_pack', None)
+                        or (candidate if candidate and candidate.get('original_verification') else None)
+                        or partial or pack)
+                return supplement(ai, best, reader, title, topic, exc, progress, record)
             raise

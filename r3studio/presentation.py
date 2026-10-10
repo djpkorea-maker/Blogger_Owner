@@ -129,6 +129,14 @@ def inspection_text(row):
 
 def diagnostic_lines(detail):
     lines=[]
+    counts=detail.get('coverage',{})
+    if counts:
+        lines.append(f"본문 작성용 실제 근거: 목록 {counts['listed_sources']}개 / 원문 확보 {counts['fetched_sources']}개 / 지원 연결 {counts['used_sources']}개 / 독립 도메인 {counts['used_domains']}개")
+        lines.append(f"원문 지원 사실 {counts['supported_facts']}개 / 핵심 {counts['core_facts']}개 / 실용 {counts['practical_facts']}개 / 조건 {counts['condition_facts']}개")
+    if 'supplemental_searches' in detail:
+        lines.append('부족한 근거 추가 검색: '+str(detail['supplemental_searches'])+'/1회')
+    for source in detail.get('supplemental_source_checks',[]):
+        lines.append('추가 원문: '+source['url']+' / '+source['state']+(' / '+source['reason'] if source.get('reason') else ''))
     if detail.get('response_shape_issues'):
         lines.append('원문 검사 응답 형식 문제 · 사실 정확성 판정과 별도:')
         lines.extend('• '+issue for issue in detail['response_shape_issues'])
