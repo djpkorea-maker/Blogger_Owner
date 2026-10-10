@@ -24,6 +24,17 @@ class Tests(unittest.TestCase):
   def fetch(u):calls.append(u);return {'status':200,'url':u,'headers':{'Content-Type':'application/pdf'},'body':'','body_bytes':pdf_bytes()}
   reader=SourceReader(s,fetch);result=reader.read('https://official.example/manual.pdf')
   self.assertEqual(result['status'],'FETCHED');self.assertIn('Motor current',result['text']);reader.read(result['url']);self.assertEqual(len(calls),1);s.close()
+ def test_parallel_fetch_keeps_db_on_caller_thread_and_uses_cache(self):
+  import threading
+  main=threading.get_ident();workers=[];s=Store(':memory:')
+  def fetch(u):workers.append(threading.get_ident());return {'status':200,'url':u,'headers':{'Content-Type':'application/pdf'},'body':'','body_bytes':pdf_bytes()}
+  reader=SourceReader(s,fetch);sources=[{'id':str(i),'url':f'https://official.example/{i}.pdf'} for i in range(4)]
+  results=reader.read_many(sources,lambda *a:None);self.assertEqual(len(results),4);self.assertTrue(all(r['status']=='FETCHED' for r in results.values()));self.assertNotIn(main,workers)
+  reader.read_many(sources,lambda *a:None);self.assertEqual(len(workers),4);s.close()
+ def test_corrupt_original_cache_is_refetched(self):
+  s=Store(':memory:');reader=SourceReader(s,lambda u:{'status':200,'url':u,'headers':{'Content-Type':'application/pdf'},'body':'','body_bytes':pdf_bytes()})
+  s.db.execute("INSERT INTO source_originals VALUES('https://a.example','bad-date','FETCHED','bad-json')");s.db.commit()
+  self.assertEqual(reader.read('https://a.example')['status'],'FETCHED');s.close()
  def test_broken_pdf_is_unavailable_not_false_evidence(self):
   s=Store(':memory:');reader=SourceReader(s,lambda u:{'status':200,'url':u,'headers':{'Content-Type':'application/pdf'},'body':'','body_bytes':b'not a pdf'})
   result=reader.read('https://official.example/manual.pdf');self.assertEqual(result['status'],'UNAVAILABLE');self.assertIn('PDF',result['reason']);s.close()
