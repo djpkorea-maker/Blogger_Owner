@@ -110,7 +110,31 @@ def smoke_test():
                 root.update();time.sleep(0.02)
             if len(dialog.preview_image_refs)<2 or len(dialog.preview_widgets)!=4:raise RuntimeError('이미지 수정 후보 탭·사진 유지 실패')
             if '선택한 후보' not in dialog.preview_widgets[1].get('1.0','end'):raise RuntimeError('미반영 이미지 후보 상태 표시 실패')
-            dialog.destroy()
+            html2=html+'<figure><img src="https://lh3.googleusercontent.com/smoke2" alt="두 번째 이미지"><figcaption>그림 2. 두 번째 장면입니다.</figcaption></figure>'
+            output2=io.BytesIO();Image.new('RGB',(1024,576),'blue').save(output2,format='PNG')
+            path2=cache/'smoke2.image';path2.write_bytes(output2.getvalue())
+            reviews2=[{'index':1,'url':'https://lh3.googleusercontent.com/smoke','preview_file':str(image_path),'pixel_hash':pixel_hash},{'index':2,'url':'https://lh3.googleusercontent.com/smoke2','preview_file':str(path2),'pixel_hash':inspect_bytes(output2.getvalue())['pixel_hash']}]
+            app.show_repair({'status':'HOLD','before':{'content':html2},'proposed_content':html2,'proposal_id':0,'image_review':{'items':reviews2}})
+            editor=dialog.image_editor;editor.deiconify();root.update()
+            editor.image_slot.set(2)
+            def select_second(widget):
+                for child in widget.winfo_children():
+                    if child.winfo_class()=='TCombobox':child.event_generate('<<ComboboxSelected>>')
+                    select_second(child)
+            select_second(editor);root.update()
+            if not dialog.winfo_viewable() or not editor.winfo_viewable():raise RuntimeError('비교창·별도 이미지 수정창 동시 표시 실패')
+            calls=[];app.start_ai=lambda action,value:calls.append((action,value))
+            from tkinter import ttk
+            def find_button(widget,label):
+                for child in widget.winfo_children():
+                    if isinstance(child,ttk.Button) and child.cget('text')==label:return child
+                    found=find_button(child,label)
+                    if found:return found
+            find_button(editor,'ALT·그림 설명 재생성').invoke()
+            if calls!=[('repair_alt',{'proposal_id':0,'slot':2})] or not dialog.winfo_exists():raise RuntimeError('이미지 작업 시작 시 비교창 보존 실패')
+            refreshed=app.show_repair({'status':'HOLD','before':{'content':html2},'proposed_content':html2,'proposal_id':0,'image_review':{'items':reviews2}})
+            if refreshed is not dialog or refreshed.image_editor is not editor or editor.state()=='withdrawn' or editor.image_slot.get()!=2:raise RuntimeError('작업 결과 동일 창 갱신 실패')
+            editor.destroy();dialog.destroy()
             settings=Settings(Path(folder)/'smoke-settings.json')
             settings.save({'R3_BRIDGE_SECRET':'local-smoke-test-only','R3_START_MODE':'DEMO'})
             if settings.load().get('R3_BRIDGE_SECRET')!='local-smoke-test-only':raise RuntimeError('DPAPI 복호화 시험 실패')

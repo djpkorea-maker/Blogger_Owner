@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev68 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev69 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -175,11 +175,31 @@ class App:
             dialog.destroy();self.start_ai('execute_plan',plan)
         ttk.Button(dialog,text='검토한 계획으로 '+mode,command=execute).pack(pady=10)
     def show_repair(self,result):
-        dialog=tk.Toplevel(self.root);dialog.title('수정안 비교 · '+result['status']);dialog.geometry('1050x700')
+        pid=result['proposal_id']
+        windows=getattr(self,'repair_windows',{});self.repair_windows=windows
+        dialog=windows.get(pid)
+        if dialog is None or not dialog.winfo_exists():
+            dialog=tk.Toplevel(self.root);dialog.geometry('1050x700');windows[pid]=dialog
+        editor=getattr(dialog,'image_editor',None)
+        editor_open=bool(editor is not None and editor.winfo_exists() and editor.state()!='withdrawn')
+        selected_slot=getattr(dialog,'selected_image_slot',1)
+        for child in dialog.winfo_children():child.destroy()
+        dialog.preview_widgets=[];dialog.preview_image_refs=[]
+        dialog.title('수정안 비교 · '+result['status'])
         from .gates import Document
         tabs=ttk.Notebook(dialog);tabs.pack(fill='both',expand=True,padx=10,pady=10)
         comparison=ttk.Frame(tabs);tabs.add(comparison,text='글·이미지 비교')
-        image_tab=ttk.Frame(tabs,padding=10);tabs.add(image_tab,text='이미지 수정')
+        if editor is None or not editor.winfo_exists():
+            editor=tk.Toplevel(self.root);editor.geometry('950x760');editor.withdraw();dialog.image_editor=editor
+        for child in editor.winfo_children():child.destroy()
+        editor.preview_widgets=[];editor.preview_image_refs=[]
+        editor.title('이미지 수정 · 글 비교창은 계속 열려 있습니다')
+        editor.protocol('WM_DELETE_WINDOW',editor.withdraw)
+        dialog.protocol('WM_DELETE_WINDOW',lambda:(editor.destroy(),dialog.destroy()))
+        image_tab=ttk.Frame(editor,padding=10);image_tab.pack(fill='both',expand=True)
+        def open_editor():editor.deiconify();editor.lift()
+        ttk.Button(dialog,text='이미지 수정 · 별도 창 열기',command=open_editor).pack(anchor='w',padx=10)
+        if editor_open:open_editor()
         panes=ttk.Panedwindow(comparison,orient='horizontal');panes.pack(fill='both',expand=True)
         original=result['before'].get('content','');proposed=result.get('plan',{}).get('proposal',{}).get('content',result.get('proposed_content',''))
         from .preview import show_article_comparison
@@ -187,23 +207,24 @@ class App:
         ttk.Label(dialog,text='수정안 상태: '+('최종 검증 통과' if result['status']=='PASS' else '검증 미완료 · 미반영 제안은 적용 내용과 구분해 표시합니다.'),wraplength=1000).pack(fill='x',padx=10)
         ttk.Label(dialog,text=result.get('reason') or '수정 이유: '+' / '.join(str(x) for x in result.get('changes',[])),wraplength=1000).pack(fill='x',padx=10,pady=8)
         from .gates import Document
-        count=len(Document(proposed).images);slot=tk.IntVar(value=1)
+        count=len(Document(proposed).images);slot=tk.IntVar(value=min(selected_slot,count) if count else 1)
         controls=ttk.Frame(image_tab);controls.pack(fill='x',pady=6)
         ttk.Label(controls,text='수정할 이미지:').pack(side='left')
-        ttk.Combobox(controls,textvariable=slot,values=list(range(1,count+1)),state='readonly',width=5).pack(side='left',padx=8)
+        selector=ttk.Combobox(controls,textvariable=slot,values=list(range(1,count+1)),state='readonly',width=5);selector.pack(side='left',padx=8)
+        editor.image_slot=slot
         ttk.Label(image_tab,text='후보를 먼저 검사합니다. 본문 관련성·실제 픽셀·ALT·설명이 통과한 후보만 선택할 수 있습니다.',wraplength=900).pack(anchor='w',pady=8)
         def image_action(action):
             if self.busy:return
             value={'proposal_id':result['proposal_id'],'slot':slot.get()}
             if action=='repair_image_import':
-                path=filedialog.askopenfilename(parent=dialog,title='교체할 이미지 선택',filetypes=[('이미지','*.png *.jpg *.jpeg *.webp')])
+                path=filedialog.askopenfilename(parent=editor,title='교체할 이미지 선택',filetypes=[('이미지','*.png *.jpg *.jpeg *.webp')])
                 if not path:return
                 value['path']=path
-            dialog.destroy();self.start_ai(action,value)
+            dialog.selected_image_slot=slot.get();self.start_ai(action,value)
         for label,action in [('이미지 수정 · 파일 선택','repair_image_import'),('이미지 재생성','repair_image_generate'),('ALT·그림 설명 재생성','repair_alt'),('이 후보로 교체','repair_image_choose'),('이미지 취소 · 기존 이미지 유지','repair_image_cancel'),('수정안 최종 검증','repair_validate')]:
             ttk.Button(image_tab,text=label,command=lambda a=action:image_action(a),state='normal' if count else 'disabled').pack(anchor='w',pady=4)
         ttk.Label(image_tab,text='교체 이미지는 최종 검증 때 공개 이미지 저장소에 업로드합니다. Blogger 글은 검토한 수정안 적용 버튼을 누르기 전까지 바뀌지 않습니다.',wraplength=900).pack(anchor='w',pady=8)
-        info=ScrolledText(image_tab,wrap='word',height=9);info.pack(fill='both',expand=True,pady=8)
+        info=ScrolledText(image_tab,wrap='word',height=4);info.pack(fill='both',expand=True,pady=8)
         for index,item in enumerate(Document(proposed).images,1):
             key=str(index);candidate=result.get('image_edit_candidates',{}).get(key,{})
             selected=result.get('image_choices',{}).get(key,{})
@@ -212,6 +233,29 @@ class App:
                 info.insert('end','새 후보 검사: '+candidate.get('result','HOLD')+'\nALT: '+candidate.get('alt','')+'\n그림 설명: '+candidate.get('caption','')+'\n'+candidate.get('reason','')+'\n')
             info.insert('end','\n')
         info.config(state='disabled')
+        # Show only the selected slot's actual pixels beside its newest candidate.
+        selected_label=ttk.Label(image_tab);selected_label.pack(anchor='w')
+        selected_preview=ttk.Panedwindow(image_tab,orient='horizontal');selected_preview.pack(fill='both',expand=True)
+        def show_selected(event=None):
+            import html
+            index=slot.get();dialog.selected_image_slot=index
+            for child in selected_preview.winfo_children():child.destroy()
+            if not count:return
+            image=Document(proposed).images[index-1];url=image.get('src','')
+            candidate=result.get('image_edit_candidates',{}).get(str(index),{})
+            choice=result.get('image_choices',{}).get(str(index),{})
+            selected_label.config(text=f'선택: 이미지 {index} / {count} · ALT 재생성 대상: '+('선택한 교체 이미지' if choice else '현재 수정안 이미지')+' · 오른쪽은 새 후보이며 교체 전에는 반영되지 않습니다.')
+            content='<figure><img src="'+html.escape(url,quote=True)+'" alt="'+html.escape(image.get('alt',''),quote=True)+'"></figure>'
+            review=[dict(r,index=1) for r in result.get('image_review',{}).get('items',[]) if r.get('index')==index and r.get('url')==url]
+            current_choices={'1':choice} if choice else None
+            # Render the current selected pixels as the left side too.
+            from .preview import preview_parts
+            if choice:
+                c=choice['candidate'];review=[{'index':1,'url':url,'preview_file':c['file'],'pixel_hash':c['info']['pixel_hash']}]
+                content='<figure><img src="'+html.escape(url,quote=True)+'" alt="'+html.escape(c.get('alt',''),quote=True)+'"><figcaption>'+html.escape(c.get('caption',''))+'</figcaption></figure>'
+            preview_choice={'1':{'candidate':candidate,'expected_url':url,'preview_only':True}} if candidate.get('file') and candidate.get('info') else current_choices
+            show_article_comparison(editor,selected_preview,content,content,review,self.base/'image_cache',choices=preview_choice,image_number=index,labels=('현재 선택 이미지','새 후보 · 교체 전'))
+        selector.bind('<<ComboboxSelected>>',show_selected);show_selected()
         # Preview the newest candidate locally before the user chooses it.
         candidates=result.get('image_edit_candidates',{})
         if candidates:
@@ -219,7 +263,7 @@ class App:
             candidate_panes=ttk.Panedwindow(candidate_tab,orient='horizontal');candidate_panes.pack(fill='both',expand=True)
             candidate_choices={k:{'candidate':c,'expected_url':Document(proposed).images[int(k)-1].get('src',''),'preview_only':True} for k,c in candidates.items() if c.get('file') and c.get('info') and k.isdigit() and 1<=int(k)<=count}
             show_article_comparison(dialog,candidate_panes,proposed,proposed,result.get('image_review',{}).get('items',[]),self.base/'image_cache',choices=candidate_choices)
-        def apply():dialog.destroy();self.start_ai('apply_repair',{'id':result['proposal_id'],'expected':result.get('proposal_hash')})
+        def apply():editor.destroy();dialog.destroy();self.start_ai('apply_repair',{'id':result['proposal_id'],'expected':result.get('proposal_hash')})
         ttk.Button(dialog,text='검토한 수정안 적용',command=apply,state='normal' if result['status']=='PASS' else 'disabled').pack(pady=10)
         return dialog
     def show_backups(self):

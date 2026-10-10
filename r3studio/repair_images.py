@@ -67,6 +67,10 @@ class RepairImages:
             for key in ('plan','proposal_hash','corpus_hash','deep','images','links'):p.pop(key,None)
         with self.store.db:self.store.db.execute('UPDATE repair_proposals SET status=?,created_at=?,payload=? WHERE id=? AND blog_id=?',(status,now(),json.dumps(p,ensure_ascii=False),pid,self.adapter.blog_id))
         return {'proposal_id':pid,'status':status,**p}
+    def check_binding(self,candidate,slot,url,content):
+        binding=candidate.get('target')
+        if binding and binding!={'slot':slot,'url':url,'article_hash':digest(content)}:
+            raise ImageHold('이미지 번호·대상 변경: 후보를 다시 검사하세요.')
     def baseline(self,p):
         current=self.adapter.get_post(str(p['before']['id']))
         if post_hash(current)!=p['expected_hash'] or current['updated']!=p['before']['updated'] or current.get('url','')!=p['before'].get('url',''):raise ImageHold('LIVE 변경 감지: 새 수정안 필요')
@@ -83,6 +87,7 @@ class RepairImages:
             return self.save(pid,p)
         if action=='choose':
             candidate=candidates.get(key,{})
+            self.check_binding(candidate,slot,images[slot-1]['src'],content)
             if candidate.get('result')!='PASS':raise ImageHold('본문 관련성·픽셀·ALT 검증 PASS 후보만 선택할 수 있습니다.')
             if inspect_bytes(Path(candidate['file']).read_bytes())['byte_hash']!=candidate['info']['byte_hash']:raise ImageHold('선택 후보 파일 변경')
             choices[key]={'candidate':candidate,'expected_url':images[slot-1]['src'],'mode':candidate.get('edit_mode','replace')}
@@ -93,7 +98,7 @@ class RepairImages:
         if action=='generate':
             if generator is None:raise ImageHold('이미지 생성 모델 설정 필요')
             self.progress('본문 관련 이미지 장면 계획',0,1)
-            plan=self.ai.object('이 글과 직접 관련된 이미지 한 장의 장면을 계획하세요. prompt:문자열. 글에 없는 부품·브랜드·원리를 만들지 마세요. 실제 생활 장면, 동양적 환경, 하나의 장면, 16:9. 글자·콜라주·정밀 회로도 금지.\n'+json.dumps({'title':p['before']['title'],'article':content,'slot':slot},ensure_ascii=False))
+            plan=self.ai.object('이 글과 직접 관련된 이미지 한 장의 장면을 계획하세요. prompt:문자열. 글에 없는 부품·브랜드·원리를 만들지 마세요. 다른 이미지와 같은 장면을 반복하지 마세요. 선택한 이미지 번호에 맞는 서로 다른 관련 장면을 사용하세요. 실제 생활 장면, 동양적 환경, 하나의 장면, 16:9. 글자·콜라주·정밀 회로도 금지.\n'+json.dumps({'title':p['before']['title'],'article':content,'slot':slot,'other_image_scenes':[{'slot':k,'scene':v.get('review',{}).get('observed',''),'alt':v.get('alt','')} for k,v in candidates.items() if k!=key]},ensure_ascii=False))
             prompt=plan.get('prompt')
             if not isinstance(prompt,str) or not prompt.strip():raise ImageHold('이미지 장면 계획 응답 오류')
             self.progress('관련 이미지 후보 생성',0,1)
@@ -105,6 +110,7 @@ class RepairImages:
         elif action=='alt':
             mode='text';selected=choices.get(key)
             if selected:
+                self.check_binding(selected['candidate'],slot,images[slot-1]['src'],content)
                 data=Path(selected['candidate']['file']).read_bytes();mode=selected['mode']
                 if inspect_bytes(data)['byte_hash']!=selected['candidate']['info']['byte_hash']:raise ImageHold('선택 이미지 파일 변경')
             else:data=download(images[slot-1]['src'])
@@ -112,7 +118,12 @@ class RepairImages:
         info=inspect_bytes(data);file=self.cache/(info['byte_hash']+'.image');file.write_bytes(data)
         self.progress('후보 실제 픽셀·본문 관련성·ALT·설명 검사',0,1)
         candidate,_=ImageQA(self.store,self.ai).check(file,p['before']['title'],content,self.adapter.blog_id,'repair:'+str(pid),force=action=='alt')
-        candidate['edit_mode']=mode;candidates[key]=candidate
+        candidate['edit_mode']=mode
+        candidate['target']={'slot':slot,'url':images[slot-1]['src'],'article_hash':digest(content)}
+        candidate['checked_pixel_hash']=info['pixel_hash']
+        if action in ('generate','import') and any(v.get('info',{}).get('pixel_hash')==info['pixel_hash'] for k,v in candidates.items() if k!=key):
+            candidate['result']='HOLD';candidate['reason']='다른 번호의 후보와 실제 픽셀이 같습니다. 다른 관련 장면으로 재생성하세요.'
+        candidates[key]=candidate
         p['reason']='후보 검증 '+candidate['result']+' · 이 후보로 교체를 누르기 전에는 선택 이미지가 바뀌지 않습니다.'
         return self.save(pid,p)
     def validate(self,pid,download=public_image_bytes,fetch=None):
@@ -124,6 +135,7 @@ class RepairImages:
         try:
             for key,choice in p.get('image_choices',{}).items():
                 candidate=choice['candidate'];slot=int(key)
+                self.check_binding(candidate,slot,choice['expected_url'],p.get('proposed_content',''))
                 info=inspect_bytes(Path(candidate['file']).read_bytes())
                 if candidate.get('result')!='PASS' or info['byte_hash']!=candidate['info']['byte_hash']:raise ImageHold('이미지 후보 변경 또는 미통과')
                 if choice['mode']=='text':receipt={'ok':True,'publicImageUrl':choice['expected_url'],'byte_hash':info['byte_hash']}

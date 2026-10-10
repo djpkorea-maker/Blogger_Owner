@@ -70,7 +70,7 @@ def thumbnail_bytes(url,cache_dir,review=None,download=public_image_bytes):
     with Image.open(io.BytesIO(data)) as im:
         im=im.convert('RGB');im.thumbnail((420,260));out=io.BytesIO();im.save(out,format='PNG');return out.getvalue()
 
-def show_article_comparison(dialog,panes,original,proposed,reviews,cache_dir,download=public_image_bytes,choices=None):
+def show_article_comparison(dialog,panes,original,proposed,reviews,cache_dir,download=public_image_bytes,choices=None,image_number=None,labels=('현재 글','수정안')):
     """Create ordered text/pixel previews and asynchronously fill image placeholders."""
     import tkinter as tk
     from tkinter import ttk
@@ -78,7 +78,7 @@ def show_article_comparison(dialog,panes,original,proposed,reviews,cache_dir,dow
     from PIL import ImageTk
     events=queue.Queue();targets={};image_refs=getattr(dialog,"preview_image_refs",[]);widgets=[];parts_by_side=[]
     dialog.preview_image_refs=image_refs;dialog.preview_widgets=getattr(dialog,"preview_widgets",[])
-    for side,(label,content) in enumerate((('현재 글',original),('수정안',proposed))):
+    for side,(label,content) in enumerate(((labels[0],original),(labels[1],proposed))):
         frame=ttk.Frame(panes);panes.add(frame,weight=1)
         ttk.Label(frame,text=label,font=('',13,'bold')).pack(anchor='w')
         parts=preview_parts(content,reviews,proposed=bool(side),choices=choices);parts_by_side.append(parts)
@@ -90,7 +90,7 @@ def show_article_comparison(dialog,panes,original,proposed,reviews,cache_dir,dow
         if not content:text.insert('end','수정 본문이 아직 생성되지 않았습니다.\n')
         for part in parts:
             if part['kind']=='text':text.insert('end',part['text']);continue
-            text.insert('end',f"\n\n[이미지 {part['index']}]\n",'image_meta')
+            text.insert('end',f"\n\n[이미지 {image_number or part['index']}]\n",'image_meta')
             placeholder=ttk.Label(text,text='이미지 불러오는 중…')
             text.window_create('end',window=placeholder);text.insert('end','\n')
             key=(part.get('src',''),part.get('pixel_hash',''),part.get('preview_file',''))
@@ -112,11 +112,12 @@ def show_article_comparison(dialog,panes,original,proposed,reviews,cache_dir,dow
                 events.put((key,thumbnail_bytes(url,cache_dir,part,download),None))
             except Exception:
                 events.put((key,None,'이미지 표시 실패 · ALT와 설명은 확인할 수 있습니다.'))
+    remaining=set(targets)
     def poll():
         if not dialog.winfo_exists():return
         try:
             while True:
-                key,data,error=events.get_nowait()
+                key,data,error=events.get_nowait();remaining.discard(key)
                 photo=None
                 if data:
                     with Image.open(io.BytesIO(data)) as im:photo=ImageTk.PhotoImage(im.copy(),master=dialog)
@@ -124,7 +125,7 @@ def show_article_comparison(dialog,panes,original,proposed,reviews,cache_dir,dow
                 for target in targets[key]:
                     if target.winfo_exists():target.config(image=photo or '',text=error or '')
         except queue.Empty:pass
-        dialog.master.after(100,poll)
+        if remaining:dialog.master.after(100,poll)
     if targets:
         threading.Thread(target=worker,daemon=True).start();dialog.master.after(100,poll)
     return widgets
