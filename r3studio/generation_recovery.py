@@ -133,7 +133,16 @@ def supplement(ai, pack, reader, title, topic, failure, progress, record):
                 elif not isinstance(original.get('text'), str) or original.get('text_hash') != digest(original['text']):
                     state = 'INVALID'; reason = '추가 원문 본문 지문 확인 불가'
                 else:
-                    originals[source['id']] = original; sources.append(source); accepted_new += 1
+                    final_url = original.get('final_url', '')
+                    try:
+                        final = urlsplit(final_url)
+                        valid_final = final.scheme == 'https' and final.hostname and not final.username and not final.password
+                    except ValueError:valid_final = False
+                    if not valid_final:
+                        state = 'INVALID'; reason = '추가 원문의 실제 주소 확인 불가'
+                    else:
+                        source = deepcopy(source); source['url'] = final_url
+                        originals[source['id']] = original; sources.append(source); accepted_new += 1
                     final_urls.add(original.get('final_url', '')); hashes.add(original.get('text_hash'))
             trace['new_source_checks'].append({'url': display_url(original.get('final_url') or source['url']), 'state': state, 'reason': reason})
         record(deepcopy(trace))

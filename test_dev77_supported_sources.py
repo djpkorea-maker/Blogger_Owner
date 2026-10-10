@@ -129,6 +129,24 @@ class Tests(unittest.TestCase):
             again=service.resume(r['proposal_id'],generator);self.assertEqual(again['replacement_job_id'],r['replacement_job_id'])
             self.assertEqual(ai.searches,1);self.assertEqual(len(generator.calls),2);s.close()
 
+    def test_search_relay_is_replaced_by_checked_final_source_url(self):
+        class RelayAI(AI):
+            def ask(self,prompt,*args,**kwargs):
+                if 'R3 TARGETED EVIDENCE SUPPLEMENT' in prompt:
+                    self.searches+=1
+                    return {'citations':[{'url':'https://vertexaisearch.cloud.google.com/grounding-api-redirect/new'}]}
+                return super().ask(prompt,*args,**kwargs)
+        class RelayReader(Reader):
+            def read_many(self,sources,progress):
+                result=super().read_many(sources,progress)
+                for original in result.values():original['final_url']='https://newmanufacturer.example/manual'
+                return result
+        ai=RelayAI()
+        out=supplement(ai,one_used(),RelayReader(),TITLE,TITLE,EvidenceHold('작성 근거 부족'),lambda *a:None,lambda value:None)
+        require_originals(out);context=writer_context(TITLE,TITLE,out)
+        self.assertEqual(next(s['url'] for s in context['evidence']['sources'] if s['id']=='supplement_1'),'https://newmanufacturer.example/manual')
+        self.assertEqual(ai.searches,1)
+
     def test_old_pending_assessment_does_not_count_as_new_download(self):
         p=one_used();p['sources'][0]['assessment']='PENDING_ORIGINAL_REVIEW'
         p['original_verification']['pack_hash']=digest({'sources':p['sources'],'facts':p['facts']})
