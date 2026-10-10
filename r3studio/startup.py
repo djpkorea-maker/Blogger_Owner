@@ -71,6 +71,7 @@ def smoke_test():
             os.environ['LOCALAPPDATA']=folder
             root=tk.Tk();root.withdraw()
             app=App(root)
+            if 'Dev72 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
             root.update_idletasks() # No scheduled startup/network callbacks.
             if len(app.tabs.tabs())!=3:raise RuntimeError('세 메뉴 화면 구성 실패')
             if len(app.inspect_panes.panes())!=2:raise RuntimeError('목록·상세 조절 창 구성 실패')
@@ -156,6 +157,32 @@ def smoke_test():
             compared=app.show_repair(result);root.update_idletasks()
             if held.winfo_exists() or not compared.preview_widgets or '전원을 끄고 확인합니다.' not in compared.preview_widgets[1].get('1.0','end'):raise RuntimeError('부분 본문 비교·보류창 종료 실패')
             compared.destroy()
+            # Exercise the new policy inside each frozen executable without AI
+            # or network, including preservation of ordinary topic exclusion.
+            from .sync import Store,post_hash
+            from .recovery import Recovery
+            from .generation import Generation
+            from .job_peers import comparison_jobs
+            from .evidence import EvidenceHold
+            db=Store(str(Path(folder)/'job-policy.sqlite3'))
+            try:
+                Recovery(db,None,None);g=Generation(db,None,'SMOKE')
+                before={'id':'1','title':'기존 글','content':'<p>기존 본문</p>','status':'SCHEDULED'}
+                records=[]
+                for topic in ('로봇청소기 문턱 안전 점검 방법','로봇청소기 문턱 안전 점검 방법 상세 안내'):
+                    p={'mode':'REPLACEMENT','before':before,'expected_hash':post_hash(before)}
+                    with db.db:pid=db.db.execute('INSERT INTO repair_proposals(blog_id,post_id,created_at,status,payload) VALUES(?,?,?,?,?)',('SMOKE','1',now(),'HOLD',json.dumps(p))).lastrowid
+                    target={'proposal_id':pid,'blog_id':'SMOKE','post_id':'1','expected_hash':p['expected_hash']}
+                    job=g.reserve(topic,target=target);p['replacement_job_id']=job
+                    with db.db:db.db.execute('UPDATE repair_proposals SET payload=? WHERE id=?',(json.dumps(p),pid))
+                    g.save(job,'Evidence','HOLD',{'topic':topic,'replacement_target':target});records.append((pid,job,target))
+                if comparison_jobs(db,'SMOKE',records[1][1],records[1][2]):raise RuntimeError('같은 대상 미적용 교체안 차단 해제 실패')
+                try:g.reserve('로봇청소기 문턱 안전 점검 방법')
+                except EvidenceHold:pass
+                else:raise RuntimeError('일반 새 글 주제 중복 보호 실패')
+                with db.db:db.db.execute('UPDATE repair_proposals SET status="APPLIED" WHERE id=?',(records[0][0],))
+                if [r['id'] for r in comparison_jobs(db,'SMOKE',records[1][1],records[1][2])]!=[records[0][1]]:raise RuntimeError('적용 기록 비교 보호 실패')
+            finally:db.close()
             settings=Settings(Path(folder)/'smoke-settings.json')
             settings.save({'R3_BRIDGE_SECRET':'local-smoke-test-only','R3_START_MODE':'DEMO'})
             if settings.load().get('R3_BRIDGE_SECRET')!='local-smoke-test-only':raise RuntimeError('DPAPI 복호화 시험 실패')

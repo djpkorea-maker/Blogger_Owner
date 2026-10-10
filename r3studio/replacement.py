@@ -20,11 +20,16 @@ def replacement_view(p):
 def replacement_target(store,blog_id,payload):
     target=payload.get('replacement_target')
     if target is None:return None
-    if not isinstance(target,dict) or target.get('blog_id')!=str(blog_id) or not isinstance(target.get('post_id'),str):raise ImageHold('전체 교체 대상 기록 불일치')
+    if (not isinstance(target,dict) or target.get('blog_id')!=str(blog_id) or not isinstance(target.get('post_id'),str)
+        or type(target.get('proposal_id')) is not int or target['proposal_id']<=0):raise ImageHold('전체 교체 대상 기록 불일치')
     row=store.db.execute('SELECT post_id,payload,status FROM repair_proposals WHERE id=? AND blog_id=?',(target.get('proposal_id'),str(blog_id))).fetchone()
     if not row or row['post_id']!=target['post_id']:raise ImageHold('전체 교체 대상 수정안 없음')
-    p=json.loads(row['payload'])
-    if p.get('mode')!='REPLACEMENT' or p.get('expected_hash')!=target.get('expected_hash') or post_hash(p['before'])!=target.get('expected_hash'):raise ImageHold('전체 교체 원본 기록 불일치')
+    try:
+        p=json.loads(row['payload'])
+        if not isinstance(p,dict) or not isinstance(p.get('before'),dict):raise ValueError()
+        if (p.get('mode')!='REPLACEMENT' or str(p['before'].get('id'))!=target['post_id']
+            or p.get('expected_hash')!=target.get('expected_hash') or post_hash(p['before'])!=target.get('expected_hash')):raise ValueError()
+    except (ValueError,TypeError,KeyError):raise ImageHold('전체 교체 원본 기록 불일치 또는 손상') from None
     return target
 
 def saved_replacements(store,blog_id):
@@ -84,9 +89,9 @@ class Replacement:
         try:
             p['replacement_stage']='주제 작업 예약'
             g=Generation(self.store,self.ai,self.adapter.blog_id,self.progress)
-            job=g.reserve(topic.strip());p['replacement_job_id']=job
-            self.images.save(pid,p)
             target={'proposal_id':pid,'blog_id':self.adapter.blog_id,'post_id':str(p['before']['id']),'expected_hash':p['expected_hash']}
+            job=g.reserve(topic.strip(),target=target);p['replacement_job_id']=job
+            self.images.save(pid,p)
             g.save(job,'기존 글 전체 교체 준비','HOLD',{'topic':topic.strip(),'replacement_target':target})
             return self.resume(pid,generator)
         except Cancelled:raise
