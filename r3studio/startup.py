@@ -74,10 +74,10 @@ def smoke_test():
             root.update_idletasks() # No scheduled startup/network callbacks.
             if len(app.tabs.tabs())!=3:raise RuntimeError('세 메뉴 화면 구성 실패')
             if len(app.inspect_panes.panes())!=2:raise RuntimeError('목록·상세 조절 창 구성 실패')
-            root.deiconify();root.update_idletasks()
+            root.deiconify();root.update();root.update_idletasks()
             target=max(10,min(180,app.inspect_panes.winfo_height()//2))
             app.inspect_panes.sashpos(0,target)
-            if app.inspect_panes.sashpos(0)!=target:raise RuntimeError('목록·상세 경계선 조절 실패')
+            if app.inspect_panes.sashpos(0)!=target:raise RuntimeError(f'목록·상세 경계선 조절 실패: height={app.inspect_panes.winfo_height()}, requested={target}, actual={app.inspect_panes.sashpos(0)}')
             app.update_progress('근거 조사 · AI 응답 대기 중')
             if str(app.progress_bar.cget('mode'))!='indeterminate':raise RuntimeError('AI 대기 진행 표시 실패')
             if app.busy:raise RuntimeError('기본 자동 조회 비활성화 실패')
