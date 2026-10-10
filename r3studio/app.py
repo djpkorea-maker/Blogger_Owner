@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev66 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev67 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -179,12 +179,13 @@ class App:
         from .gates import Document
         panes=ttk.Panedwindow(dialog,orient='horizontal');panes.pack(fill='both',expand=True,padx=10,pady=10)
         original=result['before'].get('content','');proposed=result.get('plan',{}).get('proposal',{}).get('content',result.get('proposed_content',''))
-        for label,content in [('현재 글',original),('수정안 · '+('검증 통과' if result['status']=='PASS' else '검증 미완료'),proposed)]:
-            frame=ttk.Frame(panes);panes.add(frame,weight=1);ttk.Label(frame,text=label,font=('',13,'bold')).pack(anchor='w')
-            text=ScrolledText(frame,wrap='word');text.pack(fill='both',expand=True);text.insert('end','\n'.join(Document(content).text));text.config(state='disabled')
+        from .preview import show_article_comparison
+        show_article_comparison(dialog,panes,original,proposed,result.get('image_review',{}).get('items',[]),self.base/'image_cache')
+        ttk.Label(dialog,text='수정안 상태: '+('최종 검증 통과' if result['status']=='PASS' else '검증 미완료 · 미반영 제안은 적용 내용과 구분해 표시합니다.'),wraplength=1000).pack(fill='x',padx=10)
         ttk.Label(dialog,text=result.get('reason') or '수정 이유: '+' / '.join(str(x) for x in result.get('changes',[])),wraplength=1000).pack(fill='x',padx=10,pady=8)
         def apply():dialog.destroy();self.start_ai('apply_repair',result['proposal_id'])
         ttk.Button(dialog,text='검토한 수정안 적용',command=apply,state='normal' if result['status']=='PASS' else 'disabled').pack(pady=10)
+        return dialog
     def show_backups(self):
         if self.busy:return
         from .backups import inventory,inventory_text

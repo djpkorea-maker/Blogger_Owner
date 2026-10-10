@@ -83,6 +83,23 @@ def smoke_test():
             position=float(app.progress_bar.cget('value'));app.set_status('오류 정지 표시 시험')
             if float(app.progress_bar.cget('value'))!=position:raise RuntimeError('정지 후 진행 위치 보존 실패')
             if app.busy:raise RuntimeError('기본 자동 조회 비활성화 실패')
+            # Exercise the packaged ImageTk path with local pixels, no network.
+            import io,time
+            from PIL import Image
+            from .images import inspect_bytes
+            output=io.BytesIO();Image.new('RGB',(1024,576),'#8090a0').save(output,format='PNG')
+            pixels=output.getvalue();pixel_hash=inspect_bytes(pixels)['pixel_hash']
+            cache=app.base/'image_cache';cache.mkdir(exist_ok=True)
+            image_path=cache/'smoke.image';image_path.write_bytes(pixels)
+            html='<p>본문 시작</p><figure><img src="https://lh3.googleusercontent.com/smoke" alt="하부 점검 사진"><figcaption>그림 1. 실제 점검 모습을 설명합니다.</figcaption></figure><p>본문 끝</p>'
+            dialog=app.show_repair({'status':'HOLD','before':{'content':html},'proposed_content':html,'proposal_id':0,
+                'image_review':{'items':[{'index':1,'url':'https://lh3.googleusercontent.com/smoke','preview_file':str(image_path),'pixel_hash':pixel_hash}]}})
+            deadline=time.monotonic()+5
+            while not dialog.preview_image_refs and time.monotonic()<deadline:
+                root.update();time.sleep(0.02)
+            if len(dialog.preview_image_refs)!=1:raise RuntimeError('수정안 비교 이미지 표시 실패')
+            if len(dialog.preview_widgets)!=2 or any('ALT: 하부 점검 사진' not in w.get('1.0','end') or '그림 설명: 그림 1.' not in w.get('1.0','end') for w in dialog.preview_widgets):raise RuntimeError('수정안 비교 ALT·설명 표시 실패')
+            dialog.destroy()
             settings=Settings(Path(folder)/'smoke-settings.json')
             settings.save({'R3_BRIDGE_SECRET':'local-smoke-test-only','R3_START_MODE':'DEMO'})
             if settings.load().get('R3_BRIDGE_SECRET')!='local-smoke-test-only':raise RuntimeError('DPAPI 복호화 시험 실패')
