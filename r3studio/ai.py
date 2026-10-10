@@ -3,8 +3,46 @@ import json
 import os
 import re
 import urllib.request
+import urllib.error
+import socket
 
-class AIError(RuntimeError): pass
+class AIError(RuntimeError):
+    def __init__(self,message,diagnostic=None):
+        super().__init__(message)
+        self.diagnostic=diagnostic
+
+ERROR_GUIDANCE={
+    400:('요청 형식 또는 모델 지원 기능 오류','모델명과 검색·JSON 요청 형식을 확인하세요.'),
+    401:('API 인증 실패','연결 설정에 저장한 API 키를 확인하세요.'),
+    402:('결제 또는 크레딧 문제','이 API 키가 속한 프로젝트의 결제 상태를 확인하세요.'),
+    403:('API 사용 권한 또는 키 제한','API 키의 프로젝트·서비스 권한·키 제한을 확인하세요.'),
+    404:('모델 또는 API 경로를 찾지 못함','설정한 모델명과 해당 API 지원 여부를 확인하세요.'),
+    429:('요청 횟수 또는 사용량 제한','잔액 부족으로 단정할 수 없습니다. 프로젝트의 요청·토큰 한도를 확인하세요.'),
+    500:('AI 서버 내부 오류','잠시 후 한 글만 다시 검사하세요.'),
+    503:('AI 서버 일시 과부하','잠시 후 한 글만 다시 검사하세요.'),
+    504:('AI 서버 응답 지연','잠시 후 한 글만 다시 검사하세요.')}
+
+def connection_error(code,model,body=b'',retry_after=None):
+    # Store only classified information; never persist raw server messages or requests.
+    title,action=ERROR_GUIDANCE.get(code,('AI 요청 실패','오류 코드와 모델 설정을 확인하세요.'))
+    reason=''
+    try:
+        raw=json.loads(body);error=raw.get('error',{})
+        status=error.get('status') or error.get('type')
+        if status in ('INVALID_ARGUMENT','UNAUTHENTICATED','PERMISSION_DENIED','NOT_FOUND','RESOURCE_EXHAUSTED','INTERNAL','UNAVAILABLE','DEADLINE_EXCEEDED','invalid_request','permission_denied','resource_exhausted','service_unavailable'):
+            reason=status
+        message=str(error.get('message','')).lower()
+        if 'api key' in message and any(w in message for w in ('invalid','expired','not valid')):
+            title,action='API 키가 유효하지 않음','연결 설정의 API 키와 키 사용 제한을 확인하세요.'
+            reason='INVALID_API_KEY'
+    except (ValueError,TypeError,AttributeError):pass
+    diagnostic={'http_status':code,'reason':reason,'model':model,'summary':title,'action':action}
+    if retry_after and str(retry_after).isdigit():diagnostic['retry_after_seconds']=min(int(retry_after),86400)
+    text=f'AI 연결 실패 · HTTP {code} · {title}\n모델: {model}\n'+action
+    if reason:text+='\n오류 분류: '+reason
+    if 'retry_after_seconds' in diagnostic:text+=f"\n서버 재시도 안내: {diagnostic['retry_after_seconds']}초 이후"
+    return AIError(text,diagnostic)
+
 
 def output_blocks(raw):
     if not isinstance(raw,dict):raise AIError('AI 응답 형식 오류')
@@ -37,7 +75,20 @@ class Gemini:
                 data=res.read(8*1024*1024+1)
                 if len(data)>8*1024*1024: raise AIError('AI 응답 크기 초과')
                 return json.loads(data)
-        except (OSError,ValueError): raise AIError('AI 연결 실패: API 설정, 모델 권한, 사용량을 확인하세요.') from None
+        except urllib.error.HTTPError as exc:
+            try:body=exc.read(65536)
+            except OSError:body=b''
+            raise connection_error(exc.code,self.model,body,exc.headers.get('Retry-After') if exc.headers else None) from None
+        except (TimeoutError,socket.timeout):
+            raise AIError('AI 응답 시간 초과: 서버 응답을 기다리다 중단했습니다. 잠시 후 한 글만 재검사하세요.',{'reason':'TIMEOUT','model':self.model,'summary':'응답 시간 초과','action':'잠시 후 한 글만 재검사하세요.'}) from None
+        except urllib.error.URLError as exc:
+            timeout=isinstance(exc.reason,(TimeoutError,socket.timeout))
+            reason='TIMEOUT' if timeout else 'NETWORK'
+            raise AIError('AI 연결 실패: '+('응답 시간 초과' if timeout else '인터넷·DNS·보안 연결 확인 필요'),{'reason':reason,'model':self.model,'summary':'응답 시간 초과' if timeout else '네트워크 연결 실패','action':'인터넷 연결을 확인하고 잠시 후 한 글만 재검사하세요.'}) from None
+        except OSError:
+            raise AIError('AI 네트워크 연결 실패: 인터넷 연결을 확인하세요.',{'reason':'NETWORK','model':self.model,'summary':'네트워크 연결 실패','action':'인터넷 연결을 확인하세요.'}) from None
+        except ValueError:
+            raise AIError('AI 서버 응답 형식 오류: 정상 JSON 응답을 받지 못했습니다.',{'reason':'INVALID_JSON','model':self.model,'summary':'서버 응답 형식 오류','action':'잠시 후 재검사하세요.'}) from None
     def ask(self,prompt,search=False,json_output=False):
         payload={'model':self.model,'input':prompt,'store':False}
         if search: payload['tools']=[{'type':'google_search'}]

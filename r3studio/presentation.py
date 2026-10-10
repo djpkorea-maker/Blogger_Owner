@@ -22,6 +22,14 @@ def history_text(rows):
     for row in rows:
         status='종료 미확인 · 이전 작업 상태 확인 필요' if row['status']=='RUNNING' else LABELS.get(row['status'],row['status'])
         lines.append(f"기록 {row['id']} · {row['task']} · {status}\n시작: {row['started_at']} / 종료: {row['finished_at'] or '미확인'}")
+        try:
+            import json
+            detail=json.loads(row['details'])
+        except (ValueError,TypeError,KeyError):detail=None
+        if isinstance(detail,dict):
+            for key,label in [('http_status','HTTP 오류 코드'),('reason','오류 분류'),('model','사용 모델'),('summary','원인'),('action','다음 조치'),('retry_after_seconds','재시도 대기(초)')]:
+                if detail.get(key) is not None:lines.append(label+': '+str(detail[key]))
+        elif row['status']=='FAILED':lines.append('이전 기록에는 상세 원인이 없습니다. 보완 버전으로 재검사해야 확인할 수 있습니다.')
     return '\n\n'.join(lines) or '저장된 작업 기록이 없습니다.'
 
 def inspection_summary(sync,checks,rows,demo=False):
@@ -56,3 +64,39 @@ def google_text(result):
 def google_sort_key(result):
     priority=0 if result.get('new_problem') else 1 if result.get('changed') else 2 if result.get('needs_attention') else 3
     return priority,result.get('title','')
+
+
+def inspection_text(row):
+    """Describe evidence actually present; absence must never imply a pass."""
+    d=row.get('details') or {};fast=d.get('fast') or d
+    metrics=fast.get('metrics',{});deep=d.get('deep') or {};review=deep.get('review') or {}
+    lines=[f"글 번호: {row['post_id']}",f"상태: {row.get('status','')} / 검사 결과: {row['grade']}"]
+    if row.get('title'):lines.append('제목: '+row['title'])
+    lines.append('전체 검증: '+('완료' if d.get('verified') else '미완료 · 아직 검사하지 않은 항목을 통과로 보지 마세요.'))
+    if row.get('status')=='SCHEDULED':lines.append('예약 보호: HOLD 표시는 Blogger의 실제 예약을 중지하지 않습니다.')
+    if row['grade'].startswith('EMPTY'):
+        lines.append('제목/본문 누락: 실제 Blogger 재조회 후 보관·복원·삭제 여부를 검토하세요. 자동 삭제하지 않습니다.')
+    if metrics:
+        lines.append(f"빠른 검사 완료: 본문 {metrics.get('text_length','?')}자 / 이미지 {metrics.get('images','?')}개 / 내부링크 {metrics.get('internal_links','?')}개 / 외부링크 {metrics.get('external_links','?')}개")
+    labels={'fact':'사실 정확성','safety':'안전성','intent':'검색 의도','practical_value':'실용성','originality':'독창성'}
+    states={'PASS':'통과','FAIL':'문제 발견','UNKNOWN':'확인 불가'}
+    lines.append('본문 심층 검사: '+('완료 · '+ ' / '.join(labels[k]+': '+states.get(review.get(k),'확인 불가') for k in labels) if review else '미완료 · 결과 없음'))
+    stages=d.get('check_states',{})
+    lines.append('실제 이미지·ALT·설명 검사: '+stages.get('images', '완료' if d.get('images') else '미검사 · 이미지 개수만으로 품질을 판단할 수 없습니다.'))
+    lines.append('링크 공개 접근 검사: '+stages.get('links','완료' if d.get('links',{}).get('pass') else '미검사 · 링크 개수와 실제 접근 검사는 별개입니다.'))
+    issues=list(dict.fromkeys(list(fast.get('issues',[]))+list(d.get('issues',[]))+list(deep.get('issues',[]))))
+    for claim in review.get('unsupported_claims',[]):issues.append('근거 부족 주장: '+str(claim))
+    lines.append('\n확인할 문제와 다음 조치:')
+    if not issues:lines.append('기록된 지적 없음 · 전체 검증 완료 여부는 위 항목을 확인하세요.')
+    for issue in issues:
+        lines.append('• '+str(issue))
+        if issue=='내부링크 확인 필요':lines.append('  위치: 본문 전체에서 내부링크 0개 감지. 실제 공개된 관련 글을 선택하고 관련 설명 문장 뒤에 연결해야 합니다. 추천 글·삽입 문장은 아직 생성하지 않았습니다.')
+        elif issue=='외부 근거 링크 확인 필요':lines.append('  본문 주장에 맞는 공식 근거 URL을 확인해 해당 설명 부분에 추가해야 합니다.')
+        elif issue=='ALT 누락':lines.append('  ALT가 빈 이미지의 실제 픽셀을 확인하고 보이는 대상을 설명해야 합니다.')
+    for finding in review.get('findings',[]):
+        lines.extend(['\n문제 위치: '+finding['location'],'문제 내용: '+finding['excerpt'],'이유: '+finding['reason'],'수정 제안: '+finding['suggestion']])
+    if review and issues and not review.get('findings'):lines.append('세부 문제 위치가 응답에 없습니다. 심층 재검사 또는 수정안 검토가 필요합니다.')
+    if d.get('error_diagnostic'):
+        error=d['error_diagnostic'];lines.append('검사 실패 원인: '+error.get('summary','확인 필요')+' / '+error.get('action','작업 기록 확인'))
+    if not d.get('verified'):lines.append('\n다음: 연결 오류가 있으면 먼저 해결 → 선택 글 심층 검사 → 수정안 만들기 → 변경 내용 검토')
+    return '\n'.join(lines)

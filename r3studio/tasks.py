@@ -16,5 +16,8 @@ class TaskLog:
         with self.store.db:self.store.db.execute('UPDATE task_runs SET finished_at=?,status=?,details=? WHERE id=?',(now(),status,details,self.id))
 
 def finish_error(task,error):
-    # Persist the exception class only, never remote payloads or credentials.
-    if task:task.finish('CANCELLED' if isinstance(error,Cancelled) else 'FAILED',type(error).__name__)
+    # Only our classified AI diagnostics are safe to persist.
+    from .ai import AIError
+    import json
+    details=json.dumps(error.diagnostic,ensure_ascii=False) if isinstance(error,AIError) and error.diagnostic else type(error).__name__
+    if task:task.finish('CANCELLED' if isinstance(error,Cancelled) else 'FAILED',details)

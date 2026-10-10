@@ -388,7 +388,7 @@ class App:
         except Exception as exc:
             if action=='deep' and store and adapter:
                 from .existing import record_incomplete
-                incomplete=record_incomplete(store,adapter.blog_id,value)
+                incomplete=record_incomplete(store,adapter.blog_id,value,exc)
                 if incomplete:self.events.put(('inspection_incomplete',incomplete))
             finish_error(task,exc);self.events.put(('error',str(exc)))
         finally:
@@ -476,7 +476,8 @@ class App:
         selected=self.table.selection()
         if not selected: return
         r=self.results[selected[0]]; d=r['details']; self.notes.delete('1.0','end')
-        self.notes.insert('end',f"Post ID: {r['post_id']}\n결과: {r['grade']}\n"+'\n'.join(d.get('issues',[]))+f"\n지표: {json.dumps(d.get('metrics',{}),ensure_ascii=False)}\n{('사실·안전·이미지·링크 검사 완료' if d.get('verified') else '전체 검증 미완료 · 지적 사항과 다음 검사를 확인하세요.')}")
+        from .presentation import inspection_text
+        self.notes.insert('end',inspection_text(r))
 def main():
     from .startup import launch
     return launch()

@@ -72,8 +72,8 @@ class ImageQA:
             confirm=self.ai.image_object('이 ALT/설명문이 실제 픽셀과 일치하는지 확인하세요. match:boolean. 보이지 않는 주장을 추가했으면 false.\n'+json.dumps(text,ensure_ascii=False),data,info['mime'])
             if not isinstance(confirm,dict) or confirm.get('match') is not True: raise ImageHold('ALT/설명문과 이미지 불일치')
             result={'result':'PASS','file':str(path.resolve()),'info':info,'review':review,**text}
-        except AIError:
-            result={'result':'HOLD','file':str(path.resolve()),'info':info,'review':review,'reason':'이미지 AI 검사 응답 실패: 재검사 필요'}
+        except AIError as exc:
+            result={'result':'HOLD','file':str(path.resolve()),'info':info,'review':review,'reason':str(exc) if exc.diagnostic else '이미지 AI 검사 응답 실패: 재검사 필요','error_diagnostic':exc.diagnostic}
         except ImageHold as exc:
             result={'result':'HOLD','file':str(path.resolve()),'info':info,'review':review,'reason':str(exc)}
         self.record(blog_id,post_id,result,reused=False)
@@ -106,14 +106,16 @@ def check_public_images(store,ai,title,content,cache_dir,blog_id,post_id,downloa
         raise ImageHold('공개 이미지 ALT 누락')
     candidates=[];qa=ImageQA(store,ai);cache_dir=Path(cache_dir);cache_dir.mkdir(parents=True,exist_ok=True)
     for index,image in enumerate(document.images):
-        url=image.get('src','');data=download(url);info=inspect_bytes(data)
+        url=image.get('src','')
+        try:data=download(url);info=inspect_bytes(data)
+        except ImageHold as exc:raise ImageHold(f'이미지 {index+1}: {exc}') from None
         path=cache_dir/(info['byte_hash']+'.image');path.write_bytes(data)
         result,_=qa.check(path,title,content,blog_id,post_id)
-        if result['result']!='PASS':raise ImageHold('공개 제공 이미지 QA 미통과')
+        if result['result']!='PASS':raise ImageHold(f"이미지 {index+1}: "+result.get('reason','공개 제공 이미지 QA 미통과'))
         try:
             confirmed=ai.image_object('이미지 픽셀에 이 ALT와 설명문이 모두 정확히 일치하는지 검사하세요. match:boolean. 불확실하면 false.\n'+json.dumps({'alt':image.get('alt',''),'caption':captions[index]},ensure_ascii=False),data,info['mime'])
-        except AIError:
-            raise ImageHold('공개 이미지 AI 검사 응답 실패: 재검사 필요') from None
-        if not isinstance(confirmed,dict) or confirmed.get('match') is not True:raise ImageHold('최종 본문 ALT와 공개 이미지 불일치')
+        except AIError as exc:
+            raise ImageHold(f'이미지 {index+1}: '+(str(exc) if exc.diagnostic else '공개 이미지 AI 검사 응답 실패: 재검사 필요')) from None
+        if not isinstance(confirmed,dict) or confirmed.get('match') is not True:raise ImageHold(f'이미지 {index+1}: 최종 본문 ALT·설명과 실제 픽셀 불일치')
         candidates.append({'result':'PASS','url':url,'alt':image.get('alt',''),'pixel_hash':info['pixel_hash'],'article_hash':digest({'title':title,'content':content})})
     return candidates
