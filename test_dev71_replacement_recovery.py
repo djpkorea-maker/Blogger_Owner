@@ -88,5 +88,22 @@ class Tests(unittest.TestCase):
    class AI(fixture.AI):
     def object(self,p):return {'duplicate':False,'reason':''}
    g=Generation(s,AI(),'blog');result=g.resume(r['replacement_job_id']);self.assertIn('입력한 새 제목 검토 필요',result['reason']);self.assertNotIn('content',g.load_job(r['replacement_job_id'])['payload']);s.close()
+ def test_invalid_writer_description_keeps_draft_and_retries_writer(self):
+  with tempfile.TemporaryDirectory() as d:
+   s,a,pid=self.setup_case(d)
+   with patch.object(Generation,'resume',return_value={'status':'HOLD'}):r=Replacement(s,a,fixture.AI(),d).start(pid,'청소기를 안전하게 점검하는 방법',fixture.Generator())
+   class AI(fixture.AI):
+    writes=0
+    def object(self,prompt):
+     if 'duplicate:boolean' in prompt:return {'duplicate':False,'reason':''}
+     if '블로그 글을 작성하세요' in prompt:
+      self.writes+=1;return {'content_html':fixture.CONTENT,'search_description':'' if self.writes==1 else '안전 점검 순서'}
+     return super().object(prompt)
+   from test_generation import pack
+   ai=AI();g=Generation(s,ai,'blog')
+   with patch('r3studio.generation.Research.collect',return_value=pack()),patch('r3studio.semantic.title_profile',return_value={'duplicate':False}),patch('r3studio.semantic.body_review',return_value={'duplicate':False}):
+    g.resume(r['replacement_job_id']);first=g.load_job(r['replacement_job_id'])['payload'];self.assertEqual(first['draft_content'],fixture.CONTENT);self.assertNotIn('writer_evidence_hash',first)
+    g.resume(r['replacement_job_id'])
+   self.assertEqual(ai.writes,2);self.assertEqual(g.load_job(r['replacement_job_id'])['payload']['content'],fixture.CONTENT);s.close()
 
 if __name__=='__main__':unittest.main()

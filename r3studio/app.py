@@ -259,7 +259,9 @@ class App:
         if result.get('replacement_job_id'):
             ttk.Button(replacement_controls,text='전체 교체 작업 이어서 진행',command=lambda:self.start_ai('replace_resume',{'proposal_id':pid}) if not self.busy else None).pack(side='left',padx=8)
         ttk.Button(replacement_controls,text='수정안 최종 검증',command=lambda:self.start_ai('repair_validate',{'proposal_id':pid,'slot':1}) if not self.busy else None).pack(side='right')
-        ttk.Label(dialog,text='기존 제목: '+result['before'].get('title','')+'\n입력한 새 주제 / 제목: '+result.get('replacement_topic','해당 없음')+'\n새 제목: '+(result.get('proposed_title') or '아직 생성되지 않음')+'\n기존 상태: '+result['before'].get('status','')+' · 예약/발행 시각: '+str(result['before'].get('published','미확인')),wraplength=1000).pack(fill='x',padx=10)
+        title=result.get('proposed_title') or result.get('plan',{}).get('proposal',{}).get('title') or ('아직 생성되지 않음' if result.get('mode')=='REPLACEMENT' else result['before'].get('title',''))
+        requested='\n입력한 새 제목: '+result.get('replacement_topic','') if result.get('mode')=='REPLACEMENT' else ''
+        ttk.Label(dialog,text='기존 제목: '+result['before'].get('title','')+requested+'\n수정안 제목: '+title+'\n기존 상태: '+result['before'].get('status','')+' · 예약/발행 시각: '+str(result['before'].get('published','미확인')),wraplength=1000).pack(fill='x',padx=10)
         from .gates import Document
         tabs=ttk.Notebook(dialog);tabs.pack(fill='both',expand=True,padx=10,pady=10)
         comparison=ttk.Frame(tabs);tabs.add(comparison,text='글·이미지 비교')
