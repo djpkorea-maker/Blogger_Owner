@@ -67,13 +67,14 @@ class Gemini:
         if not key or not re.fullmatch(r'[A-Za-z0-9._-]+',model):
             raise AIError('Gemini API 키와 모델명을 설정하세요.')
         self.key,self.model,self.transport=key,model,transport or self._http
+        self.request_timeout_seconds=self.REQUEST_TIMEOUT_SECONDS
     @classmethod
     def from_environment(cls):
         return cls(os.environ.get('R3_GEMINI_KEY',''),os.environ.get('R3_GEMINI_MODEL',''))
     def _http(self,payload):
         req=urllib.request.Request('https://generativelanguage.googleapis.com/v1beta/interactions',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','x-goog-api-key':self.key},method='POST')
         try:
-            with urllib.request.urlopen(req,timeout=self.REQUEST_TIMEOUT_SECONDS) as res:
+            with urllib.request.urlopen(req,timeout=self.request_timeout_seconds) as res:
                 data=res.read(8*1024*1024+1)
                 if len(data)>8*1024*1024: raise AIError('AI 응답 크기 초과')
                 return json.loads(data)
@@ -91,19 +92,27 @@ class Gemini:
             raise AIError('AI 네트워크 연결 실패: 인터넷 연결을 확인하세요.',{'reason':'NETWORK','model':self.model,'summary':'네트워크 연결 실패','action':'인터넷 연결을 확인하세요.'}) from None
         except ValueError:
             raise AIError('AI 서버 응답 형식 오류: 정상 JSON 응답을 받지 못했습니다.',{'reason':'INVALID_JSON','model':self.model,'summary':'서버 응답 형식 오류','action':'잠시 후 재검사하세요.'}) from None
-    def ask(self,prompt,search=False,json_output=False):
+    def ask(self,prompt,search=False,json_output=False,timeout_seconds=None):
         payload={'model':self.model,'input':prompt,'store':False}
-        if search: payload['tools']=[{'type':'google_search'}]
+        if search:
+            payload['tools']=[{'type':'google_search'}]
+            # Only the officially documented Flash model's retrieval phase uses low thinking.
+            # Factual, image and final quality judgments keep their normal settings.
+            if self.model=='gemini-3.8-flash':payload['generation_config']={'thinking_level':'low'}
         if json_output: payload['response_format']={'type':'text','mime_type':'application/json','schema':{'type':'object','additionalProperties':True}}
+        limit=self.REQUEST_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        if type(limit) is not int or not 20<=limit<=self.REQUEST_TIMEOUT_SECONDS:raise ValueError('AI 요청 대기 설정 범위 오류')
+        previous_timeout=self.request_timeout_seconds;self.request_timeout_seconds=limit
         started=time.monotonic()
         try:raw=self.transport(payload)
         except AIError as exc:
             if exc.diagnostic:
                 request_type='검색 근거 조사' if search else '이미지 검사' if isinstance(prompt,list) else '구조화 검사' if json_output else '본문 응답'
                 elapsed=round(time.monotonic()-started,1)
-                exc.diagnostic.update(request_type=request_type,elapsed_seconds=elapsed,timeout_seconds=self.REQUEST_TIMEOUT_SECONDS)
-                exc.args=(str(exc)+f'\n요청 종류: {request_type} / 대기 {elapsed}초 / 요청 대기 설정 {self.REQUEST_TIMEOUT_SECONDS}초',)
+                exc.diagnostic.update(request_type=request_type,elapsed_seconds=elapsed,timeout_seconds=limit,input_chars=len(json.dumps(prompt,ensure_ascii=False)),search_enabled=search,thinking_level=payload.get('generation_config',{}).get('thinking_level','default'))
+                exc.args=(str(exc)+f'\n요청 종류: {request_type} / 대기 {elapsed}초 / 요청 대기 설정 {limit}초',)
             raise
+        finally:self.request_timeout_seconds=previous_timeout
 
         blocks=output_blocks(raw)
         text='\n'.join(b.get('text','') for b in blocks if b.get('type')=='text')
