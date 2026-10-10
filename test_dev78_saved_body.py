@@ -147,6 +147,29 @@ class Tests(unittest.TestCase):
             self.assertEqual(len(gen.calls),3);self.assertEqual(again['image_edit_candidates']['1']['info']['pixel_hash'],first_hash)
             self.assertEqual(ai.repairs,0);self.assertEqual(a.get_post('1')['content'],again['before']['content']);s.close()
 
+    def test_non_string_review_findings_are_format_errors_not_factual_verdicts(self):
+        for key in ('issues','unsupported_claims'):
+            class Bad:
+                model='test'
+                def object(self,prompt):
+                    r=deepcopy(fixture.REVIEW);r[key]=[{'unreadable':'wrong type'}];return r
+            r=evaluate(Bad(),{'status':'DRAFT'},pack(),{'issues':[]},text_only=True)
+            self.assertNotIn('review',r);self.assertEqual(r['grade'],'NEEDS_DEEP')
+            self.assertIn('응답 형식 오류',r['issues'][0])
+
+    def test_independent_fact_timeout_preserves_body_and_does_not_use_old_review(self):
+        with tempfile.TemporaryDirectory() as d:
+            class Unavailable(AI):
+                def ask(self,prompt,*a,**kw):
+                    if '저장된 본문의 핵심 사실' in prompt:
+                        self.audits+=1;raise AIError('독립 Fact 대기 시간 초과',{'reason':'TIMEOUT','summary':'응답 시간 초과'})
+                    return super().ask(prompt,*a,**kw)
+            ai=Unavailable();s,a,svc,r,before=seed(d,ai);gen=fixture.Generator()
+            out=svc.resume(r['proposal_id'],gen)
+            self.assertEqual(out['proposed_content'],before['content']);self.assertEqual(ai.repairs,0);self.assertEqual(gen.calls,[])
+            self.assertEqual(out['error_diagnostic']['reason'],'TIMEOUT');self.assertNotIn('generation_text_review',out)
+            self.assertEqual(ai.audits,1);s.close()
+
     def test_factual_unknown_is_never_ignored_as_a_deferred_image_check(self):
         p={'content':fixture.CONTENT,'deep':{'review':deepcopy(fixture.REVIEW)},'fast':{'issues':['이미지 2장 미만','내부링크 확인 필요']}}
         self.assertTrue(text_ready(p));p['deep']['review']['fact']='UNKNOWN'

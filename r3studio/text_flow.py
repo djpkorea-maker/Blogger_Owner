@@ -38,7 +38,7 @@ def diagnosis(payload):
     for item in review.get('findings',[]):
         findings.append({**item,'excerpt_in_body':bool(item.get('excerpt')) and norm(item['excerpt']) in text})
     claims=[{'text':value,'excerpt_in_body':bool(value) and norm(value) in text} for value in review.get('unsupported_claims',[])]
-    summary='본문 품질 보류: '+' / '.join((failures+issues)[:5]) if failures or issues else '본문 지적 문장·근거 확인 후 보완 필요'
+    summary='본문 품질 보류: '+' / '.join((issues+failures)[:5]) if failures or issues else '본문 지적 문장·근거 확인 후 보완 필요'
     return {'reason':'REPLACEMENT_TEXT_HOLD','summary':summary,'stage':'본문 사실·안전·품질 검사',
         'action':'저장된 본문을 보존한 채 지적 부분만 보완·재검사합니다. 통과 후 이미지 2장을 생성합니다.',
         'text_review':{'states':{k:review.get(k,'UNKNOWN') for k in REQUIRED},

@@ -19,6 +19,7 @@ def evaluate(ai,post,pack,fast_result,text_only=False):
     valid=all(review.get(k) in ('PASS','FAIL','UNKNOWN') for k in REQUIRED)
     score=review.get('score')
     valid=valid and type(score) in (int,float) and 0<=score<=100 and review.get('severity') in ('none','minor','major','critical') and isinstance(review.get('issues'),list) and isinstance(review.get('unsupported_claims'),list)
+    valid=valid and all(isinstance(x,str) for x in review.get('issues',[])) and all(isinstance(x,str) for x in review.get('unsupported_claims',[]))
     if not valid: return {'grade':'SCHEDULED_HOLD' if post['status']=='SCHEDULED' else 'NEEDS_DEEP','issues':['심층 검사 응답 형식 오류'],'verified':False}
     findings=review.get('findings',[])
     if not isinstance(findings,list) or any(not isinstance(f,dict) or any(not isinstance(f.get(k),str) for k in ('location','excerpt','reason','suggestion')) for f in findings):
