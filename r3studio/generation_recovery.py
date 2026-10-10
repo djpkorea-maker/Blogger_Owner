@@ -7,13 +7,7 @@ from .evidence import EvidenceHold, display_url, validate_pack
 from .sources import verify_origins, norm
 
 
-FACT_SCHEMA = {'type': 'object', 'required': ['facts'], 'additionalProperties': False,
-    'properties': {'facts': {'type': 'array', 'items': {'type': 'object',
-        'required': ['id', 'text', 'source_ids', 'core', 'kind'], 'additionalProperties': False,
-        'properties': {'id': {'type': 'string'}, 'text': {'type': 'string'},
-                       'source_ids': {'type': 'array', 'items': {'type': 'string'}},
-                       'core': {'type': 'boolean'},
-                       'kind': {'type': 'string', 'enum': ['core', 'practical', 'condition', 'other']}}}}}
+FACT_SCHEMA = json.loads(r'''{"type":"object","required":["facts"],"additionalProperties":false,"properties":{"facts":{"type":"array","items":{"type":"object","required":["id","text","source_ids","core","kind"],"additionalProperties":false,"properties":{"id":{"type":"string"},"text":{"type":"string"},"source_ids":{"type":"array","items":{"type":"string"}},"core":{"type":"boolean"},"kind":{"type":"string","enum":["core","practical","condition","other"]}}}}}}''')
 
 
 def captured(pack):
