@@ -2,7 +2,7 @@ import json
 from .evidence import validate_pack,EvidenceHold
 from .sync import digest,now
 
-VERSION='R3.0-deep-0.20'
+VERSION='R3.0-deep-0.66'
 REQUIRED=('fact','safety','intent','practical_value','originality')
 
 def evaluate(ai,post,pack,fast_result):
@@ -49,3 +49,25 @@ def check_existing(store,blog_id,pid,ai,pack):
         db.execute('INSERT INTO recovery_checks(blog_id,post_id,content_hash,engine_version,checked_at,grade,details) VALUES(?,?,?,?,?,?,?)',(blog_id,pid,row['content_hash'],key,now(),result['grade'],json.dumps(result,ensure_ascii=False)))
         db.execute('UPDATE posts SET grade=?,last_checked=? WHERE blog_id=? AND post_id=?',(result['grade'],now(),blog_id,pid))
     return result,False
+
+
+def diagnose_incomplete(post,pack,fast_result):
+    """Local, actionable diagnosis; incomplete evidence can never authorize writes."""
+    from .evidence import ArticleContext
+    from .sources import norm
+    context=ArticleContext(post.get('content',''))
+    diagnostic=pack.get('evidence_review',{}).get('diagnostic',{})
+    findings=[];unsupported=[]
+    for item in diagnostic.get('unverified_claims',[]):
+        excerpt=item.get('text','');reason=item.get('reason','근거 미확보')
+        if not isinstance(excerpt,str) or not excerpt.strip() or norm(excerpt) not in norm(''.join(context.text)):continue
+        suggestion=('원문 언어의 실제 인용 구절로 근거를 다시 연결하세요. 확인 전에는 이 주장을 확정적으로 사용하지 마세요.'
+            if '인용 구절' in reason else
+            '해당 문장을 직접 뒷받침하는 공식 자료를 확인하세요. 특정 제품의 동작·고장 판정을 일반화하지 말고, 근거가 없으면 문장을 삭제하거나 적용 조건과 확인 필요 사항을 명시하세요.')
+        findings.append({'location':'본문에서 아래 문장 확인','excerpt':excerpt,'reason':reason,'suggestion':suggestion})
+        unsupported.append(excerpt)
+    issues=['근거 확인 보류 · 수정안 작성 후 최종 재검증 필요']
+    review={k:'UNKNOWN' for k in REQUIRED}
+    review.update(score=0,severity='none',issues=issues,unsupported_claims=unsupported,findings=findings)
+    return {'grade':'SCHEDULED_HOLD' if post['status']=='SCHEDULED' else 'NEEDS_EVIDENCE',
+        'diagnostic_only':True,'text_verified':False,'verified':False,'review':review,'issues':issues}

@@ -135,7 +135,7 @@ def run_checks(store,blog_id,force_recheck=False):
                 except (ValueError,TypeError):details={}
                 if not isinstance(details,dict):details={}
                 from .finalize import existing_review_hash
-                if full['engine_version']=='R3.0-existing-0.59':
+                if full['engine_version']=='R3.0-existing-0.66':
                     context_matches=details.get('review_context_hash')==existing_review_hash(rows,row['post_id'])
                 else:
                     context_matches=full['engine_version']=='R3.0-existing-0.23' and details.get('corpus_hash')==full_corpus_hash

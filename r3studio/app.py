@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev65 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev66 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -430,7 +430,7 @@ class App:
                 row=store.db.execute('SELECT title,content,content_hash FROM posts WHERE blog_id=? AND post_id=? AND present=1',(adapter.blog_id,value)).fetchone()
                 if not row: raise ValueError('최신 Blogger 목록에 없는 글입니다.')
                 try:
-                    pack=collect_cached(store,ai,row['title'],row['title'],adapter.blog_id+':'+value+':'+row['content_hash'],progress,article=row['content'])
+                    pack=collect_cached(store,ai,row['title'],row['title'],adapter.blog_id+':'+value+':'+row['content_hash'],progress,article=row['content'],allow_partial=True)
                 except (GeminiError,EvidenceHold) as exc:
                     from .existing import partial_link_review,record_incomplete
                     partial=None
@@ -529,7 +529,7 @@ class App:
                         self.job_id.delete(0,'end');self.job_id.insert(0,str(event[1]['job_id']))
                     self.generation_notes.insert('end',result_text(event[1])+'\n\n');self.generation_notes.see('end')
                     local=event[1].get('local_only') if isinstance(event[1],dict) else bool(event[1]) and all(x.get('local_only') for x in event[1])
-                    self.set_status(text='저장 기록 조회 완료 · 최신 Blogger 조회 없음' if local else '작업 종료 · 결과 기록 완료'); continue
+                    self.set_status(text='저장 기록 조회 완료 · 최신 Blogger 조회 없음' if local else '진단 완료 · 근거 보류 · 수정안 만들기로 이어가세요.' if isinstance(event[1],dict) and event[1].get('deep',{}).get('diagnostic_only') else '작업 종료 · 결과 기록 완료'); continue
                 self.busy=False; self.button.config(state='normal'); self.generate_button.config(state='normal')
                 if event[0]=='error': self.set_status(text='작업 중지 · 기록에서 결과를 확인하세요.'); messagebox.showerror('R3.0',event[1]); continue
                 _,sync,checks,rows,demo=event

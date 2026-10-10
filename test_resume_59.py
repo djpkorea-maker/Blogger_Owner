@@ -29,7 +29,7 @@ class Tests(unittest.TestCase):
    rows=[dict(r) for r in s.db.execute('SELECT * FROM posts')]
    row=next(r for r in rows if r['post_id']=='0')
    details={'review_context_hash':existing_review_hash(rows,'0'),'grade':'PASS','verified':True}
-   s.db.execute('INSERT INTO recovery_checks(blog_id,post_id,content_hash,engine_version,checked_at,grade,details) VALUES(?,?,?,?,?,?,?)',('blog','0',row['content_hash'],'R3.0-existing-0.59',now(),'PASS',json.dumps(details)));s.db.commit()
+   s.db.execute('INSERT INTO recovery_checks(blog_id,post_id,content_hash,engine_version,checked_at,grade,details) VALUES(?,?,?,?,?,?,?)',('blog','0',row['content_hash'],'R3.0-existing-0.66',now(),'PASS',json.dumps(details)));s.db.commit()
   stamp();a.posts['2'].update(updated='v2',title='다른 초안 변경')
   Sync(s,a,'blog').run();run_checks(s,'blog')
   self.assertEqual(s.db.execute('SELECT grade FROM posts WHERE post_id="0"').fetchone()[0],'PASS')

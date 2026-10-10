@@ -83,7 +83,10 @@ def inspection_text(row):
         lines.append(f"빠른 검사 완료: 본문 {metrics.get('text_length','?')}자 / 이미지 {metrics.get('images','?')}개 / 내부링크 {metrics.get('internal_links','?')}개 / 외부링크 {metrics.get('external_links','?')}개")
     labels={'fact':'사실 정확성','safety':'안전성','intent':'검색 의도','practical_value':'실용성','originality':'독창성'}
     states={'PASS':'통과','FAIL':'문제 발견','UNKNOWN':'확인 불가'}
-    lines.append('본문 심층 검사: '+('완료 · '+ ' / '.join(labels[k]+': '+states.get(review.get(k),'확인 불가') for k in labels) if review else '미완료 · 결과 없음'))
+    lines.append('본문 심층 검사: '+(('진단 기록 완료 · 근거 보류 · ' if deep.get('diagnostic_only') else '완료 · ')+ ' / '.join(labels[k]+': '+states.get(review.get(k),'확인 불가') for k in labels) if review else '미완료 · 결과 없음'))
+    if d.get('evidence_diagnostic'):
+        lines.append('근거 확인 보류: '+d['evidence_diagnostic'].get('summary',''))
+        lines.extend(diagnostic_lines(d['evidence_diagnostic']))
     stages=d.get('check_states',{})
     lines.append('실제 이미지·ALT·설명 검사: '+stages.get('images', '완료' if d.get('images') else '미검사 · 이미지 개수만으로 품질을 판단할 수 없습니다.'))
     lines.append('링크 공개 접근 검사: '+stages.get('links','완료' if d.get('links',{}).get('pass') else '미검사 · 링크 개수와 실제 접근 검사는 별개입니다.'))
@@ -108,6 +111,8 @@ def inspection_text(row):
         if suggestion:
             lines.append('현재 ALT: '+item['current_alt']);lines.append('ALT 수정 제안: '+suggestion['alt']);lines.append('설명문 수정 제안: '+suggestion['caption'])
             lines.append('이 제안은 적용 전 최종 픽셀 일치 재검증이 필요합니다.')
+    if d.get('image_error_diagnostic'):
+        lines.extend(diagnostic_lines(d['image_error_diagnostic']))
     access=d.get('link_access')
     if isinstance(access,dict):
         lines.append('\n링크별 공개 접근 결과 · 사실 근거 적합성과는 별도:')

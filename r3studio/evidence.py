@@ -157,11 +157,11 @@ class Research:
         diagnostic['summary']=message
         raise EvidenceHold(message,trace,diagnostic)
 
-def collect_cached(store,ai,title,topic,scope,progress=lambda *args:None,max_age_hours=168,article=None):
+def collect_cached(store,ai,title,topic,scope,progress=lambda *args:None,max_age_hours=168,article=None,allow_partial=False):
     from datetime import datetime,timezone
     db=store.db
     db.execute('CREATE TABLE IF NOT EXISTS evidence_packs(cache_key TEXT PRIMARY KEY,created_at TEXT,payload TEXT)'); db.commit()
-    key=digest({'title':title,'topic':topic,'scope':scope,'model':ai.model,'version':'evidence-0.65','article_hash':digest(article) if article is not None else None})
+    key=digest({'title':title,'topic':topic,'scope':scope,'model':ai.model,'version':'evidence-0.66','article_hash':digest(article) if article is not None else None})
     old=db.execute('SELECT * FROM evidence_packs WHERE cache_key=?',(key,)).fetchone()
     if old:
         age=(datetime.now(timezone.utc)-datetime.fromisoformat(old['created_at'])).total_seconds()/3600
@@ -170,6 +170,12 @@ def collect_cached(store,ai,title,topic,scope,progress=lambda *args:None,max_age
             pack=json.loads(old['payload']);validate_pack(pack);return pack
     pack=Research(ai).collect(title,topic,progress,article=article)
     from .sources import SourceReader,verify_origins
-    pack=verify_origins(ai,pack,SourceReader(store),progress)
+    try:
+        pack=verify_origins(ai,pack,SourceReader(store),progress)
+    except EvidenceHold as error:
+        partial=getattr(error,'partial_pack',None)
+        if not allow_partial or not isinstance(partial,dict):raise
+        progress('근거 보류 · 본문 진단 계속',1,1)
+        return partial # Deliberately excluded from the verified evidence cache.
     with db: db.execute('INSERT OR REPLACE INTO evidence_packs VALUES(?,?,?)',(key,now(),json.dumps(pack,ensure_ascii=False)))
     return pack
