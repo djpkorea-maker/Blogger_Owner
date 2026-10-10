@@ -26,7 +26,7 @@ class Tests(unittest.TestCase):
  def test_insufficient_core_stays_hold_and_then_searches(self):
   ai=AI([no_core()])
   with self.assertRaises(EvidenceHold) as caught:Research(ai).collect('제목','주제')
-  self.assertEqual(len(ai.searches),2);self.assertEqual(len(ai.prompts),3)
+  self.assertEqual(len(ai.searches),3);self.assertEqual(len(ai.prompts),5)
   self.assertEqual(caught.exception.diagnostic['ledger']['core_facts'],0)
   self.assertIn('핵심 분류 0개','\n'.join(diagnostic_lines(caught.exception.diagnostic)))
  def test_format_then_core_then_repaired_uses_one_search(self):

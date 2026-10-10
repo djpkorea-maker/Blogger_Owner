@@ -71,7 +71,7 @@ def smoke_test():
             os.environ['LOCALAPPDATA']=folder
             root=tk.Tk();root.withdraw()
             app=App(root)
-            if 'Dev73 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
+            if 'Dev74 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
             root.update_idletasks() # No scheduled startup/network callbacks.
             if len(app.tabs.tabs())!=3:raise RuntimeError('세 메뉴 화면 구성 실패')
             if len(app.inspect_panes.panes())!=2:raise RuntimeError('목록·상세 조절 창 구성 실패')
@@ -193,6 +193,26 @@ def smoke_test():
                 with db.db:db.db.execute('UPDATE repair_proposals SET status="APPLIED" WHERE id=?',(records[0][0],))
                 if [r['id'] for r in comparison_jobs(db,'SMOKE',records[1][1],records[1][2])]!=[records[0][1]]:raise RuntimeError('적용 기록 비교 보호 실패')
             finally:db.close()
+            # The reported last-search failure must execute a real ledger repair
+            # in each frozen executable. No credentials or network are used.
+            from .evidence import Research
+            from copy import deepcopy
+            evidence={'sources':[{'id':'a','url':'https://manufacturer.example/manual','grade':'A'},{'id':'b','url':'https://agency.example/guide','grade':'A'}],
+                      'facts':[{'id':str(i),'text':'공식 안전 점검 조건 '+str(i),'source_ids':['a' if i%2 else 'b'],'core':i<2,'kind':['core','core','practical','condition'][i]} for i in range(4)]}
+            class LedgerAI:
+                searches=0;ledgers=0
+                def ask(self,*args,**kwargs):
+                    self.searches+=1;return {'citations':[{'url':source['url']} for source in evidence['sources']]}
+                def object(self,prompt):
+                    self.ledgers+=1;value=deepcopy(evidence)
+                    if self.ledgers<4:
+                        for fact in value['facts']:fact['core']=False
+                    if self.ledgers==1:value['facts'][2]['kind']='other'
+                    if self.ledgers==2:value['facts']=value['facts'][:2]+value['facts'][3:]
+                    return value
+            ledger_ai=LedgerAI();checked=Research(ledger_ai).collect('안전 점검','안전 점검')
+            if (ledger_ai.searches,ledger_ai.ledgers)!=(3,4) or checked['research_budget']['ledger_repairs']!=1:raise RuntimeError('마지막 검색 이후 장부 보완 실행 실패')
+            if checked['research_attempts'][-1].get('recovery_state')!='EXECUTED':raise RuntimeError('실제 복구 실행 기록 실패')
             settings=Settings(Path(folder)/'smoke-settings.json')
             settings.save({'R3_BRIDGE_SECRET':'local-smoke-test-only','R3_START_MODE':'DEMO'})
             if settings.load().get('R3_BRIDGE_SECRET')!='local-smoke-test-only':raise RuntimeError('DPAPI 복호화 시험 실패')

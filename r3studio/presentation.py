@@ -130,6 +130,10 @@ def inspection_text(row):
 def diagnostic_lines(detail):
     lines=[]
     if detail.get('missing_criteria'):lines.append('부족한 검사 기준: '+detail['missing_criteria'])
+    budget=detail.get('research_budget',{})
+    if budget:
+        lines.append(f'실행 횟수: 검색 {budget["searches"]}/{budget["search_limit"]} · 기존 자료 장부 보완 {budget["ledger_repairs"]}/{budget["repair_limit"]}')
+    if detail.get('recovery_exhausted'):lines.append('이번 오류에 대한 자동 복구 한도 종료 · 현재 실행 중인 복구 없음')
     ledger=detail.get('ledger',{})
     if ledger:
         lines.append('근거 장부 상태: '+('AI 응답 형식·분류 보완 필요' if ledger.get('state')=='FORMAT' else '근거 연결·핵심 사실 분류 확인 필요'))
@@ -150,5 +154,6 @@ def diagnostic_lines(detail):
     for attempt in detail.get('search_attempts',[]):
         lines.append('검색 복구 기록: '+attempt['reason']+(' / '+str(attempt['elapsed_seconds'])+'초' if attempt.get('elapsed_seconds') is not None else ''))
     for attempt in detail.get('attempts',[]):
-        lines.append('근거 조사 '+str(attempt['attempt'])+'차: '+attempt['reason']+(' / '+attempt['recovery'] if attempt.get('recovery') else ''))
+        state={'PLANNED':'예정','STARTED':'요청 시작 · 완료 미확인','EXECUTED':'실행 완료 · 통과 여부와 별도','FAILED':'실행 실패'}.get(attempt.get('recovery_state'),'이전 기록 · 실행 여부 미기록')
+        lines.append('근거 조사 '+str(attempt['attempt'])+'차: '+attempt['reason']+(' / '+attempt['operation'] if attempt.get('operation') else '')+(' / '+attempt['recovery']+' ['+state+']' if attempt.get('recovery') else ''))
     return lines
