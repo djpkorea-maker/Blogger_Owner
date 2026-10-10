@@ -164,6 +164,8 @@ class Replacement:
     def capture(self,pid,p,g,job):
         record=g.load_job(job);payload=record['payload']
         p['replacement_stage']=record['stage']
+        if payload.get('generation_evidence_recovery'):
+            p['generation_evidence_recovery']=payload['generation_evidence_recovery']
         if not payload.get('content') and not payload.get('draft_content'):p.pop('proposed_content',None)
         if not payload.get('title'):p.pop('proposed_title',None)
         if payload.get('title'):

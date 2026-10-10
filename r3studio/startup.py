@@ -71,7 +71,7 @@ def smoke_test():
             os.environ['LOCALAPPDATA']=folder
             root=tk.Tk();root.withdraw()
             app=App(root)
-            if 'Dev74 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
+            if 'Dev75 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
             root.update_idletasks() # No scheduled startup/network callbacks.
             if len(app.tabs.tabs())!=3:raise RuntimeError('세 메뉴 화면 구성 실패')
             if len(app.inspect_panes.panes())!=2:raise RuntimeError('목록·상세 조절 창 구성 실패')
@@ -213,6 +213,29 @@ def smoke_test():
             ledger_ai=LedgerAI();checked=Research(ledger_ai).collect('안전 점검','안전 점검')
             if (ledger_ai.searches,ledger_ai.ledgers)!=(3,4) or checked['research_budget']['ledger_repairs']!=1:raise RuntimeError('마지막 검색 이후 장부 보완 실행 실패')
             if checked['research_attempts'][-1].get('recovery_state')!='EXECUTED':raise RuntimeError('실제 복구 실행 기록 실패')
+            # Verify the new generation-only recovery in each frozen executable.
+            from .generation_evidence import prepare,writer_context
+            from .sync import digest
+            quote='제품 설명서를 확인하고 지정된 안전 점검 조건과 사용 지침을 따릅니다.'
+            unsupported=deepcopy(evidence)
+            for fact in unsupported['facts']:fact['text']='근거 없는 모터 고장 단정 '+fact['id']
+            class OriginalReader:
+                calls=0
+                def read_many(self,sources,progress):
+                    self.calls+=1
+                    return {s['id']:{'status':'FETCHED','text':quote,'text_hash':digest(quote),'final_url':s['url']} for s in sources}
+            class OriginalAI:
+                refills=0
+                def object(self,prompt):
+                    if 'R3 GENERATION ORIGINAL REFILL' in prompt:
+                        self.refills+=1;value=deepcopy(evidence)
+                        for fact in value['facts']:fact['text']=quote+' '+fact['id']
+                        return {'facts':value['facts']}
+                    data=json.loads(prompt.split('\n',1)[1])
+                    return {'sources':[{'source_id':s['id'],'grade':'A','publisher':s['id']} for s in data['sources']],
+                            'claims':[{'fact_id':f['id'],'source_id':f['source_ids'][0],'quote':quote,'supported':f['text'].startswith(quote)} for f in data['facts']]}
+            original_ai=OriginalAI();original_reader=OriginalReader();refilled=prepare(original_ai,unsupported,original_reader,'안전 점검','안전 점검')
+            if original_ai.refills!=1 or original_reader.calls!=1 or '근거 없는' in json.dumps(writer_context('안전 점검','안전 점검',refilled),ensure_ascii=False):raise RuntimeError('원문 기반 새 글 근거 재구성 실패')
             settings=Settings(Path(folder)/'smoke-settings.json')
             settings.save({'R3_BRIDGE_SECRET':'local-smoke-test-only','R3_START_MODE':'DEMO'})
             if settings.load().get('R3_BRIDGE_SECRET')!='local-smoke-test-only':raise RuntimeError('DPAPI 복호화 시험 실패')

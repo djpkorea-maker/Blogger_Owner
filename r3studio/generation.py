@@ -105,16 +105,18 @@ class Generation:
                 if not is_fresh(payload['evidence'].get('retrieved_at'),7*86400):raise ValueError('근거 만료')
             except (EvidenceHold,KeyError,TypeError,ValueError):
                 payload['evidence']=Research(self.ai).collect(title,topic,self.progress)
-            from .sources import require_originals,verify_origins
-            try:require_originals(payload['evidence'])
-            except EvidenceHold:payload['evidence']=verify_origins(self.ai,payload['evidence'],self.source_reader,self.progress)
+            from .generation_evidence import prepare,writer_context
+            def record_recovery(value):
+                payload['generation_evidence_recovery']=value
+                self.save(job,'새 글 원문 근거 재구성','RUNNING',payload)
+            payload['evidence']=prepare(self.ai,payload['evidence'],self.source_reader,title,topic,self.progress,record_recovery)
             evidence_hash=digest(payload['evidence'])
             self.save(job,stage,'DONE',payload)
             stage='Writer'; self.save(job,stage,'RUNNING',payload)
             if payload.get('writer_evidence_hash')==evidence_hash and payload.get('content'):
                 article={'content_html':payload['content'],'search_description':payload.get('search_description','')}
             else:
-                article=self.ai.object('다음 근거 장부의 사실만 사용하여 블로그 글을 작성하세요. 없는 수치·원인·경험을 만들지 마세요. 조건·예외·실제 점검 순서를 포함하세요. HTML 본문 1800~2800자, H1 제외, H2 사용, 내부 메타데이터 제외. content_html:문자열, search_description:문자열(150자 이하). 이미지는 아직 삽입하지 마세요.\n'+json.dumps(payload,ensure_ascii=False))
+                article=self.ai.object('다음 근거 장부의 사실만 사용하여 블로그 글을 작성하세요. 없는 수치·원인·경험을 만들지 마세요. 특정 제품 지침을 모든 제품에 일반화하지 마세요. 조건·예외·실제 점검 순서를 포함하세요. 원문과 검증된 인용에 없는 안전 조작을 추가하지 마세요. HTML 본문 1800~2800자, H1 제외, H2 사용, 내부 메타데이터 제외. content_html:문자열, search_description:문자열(150자 이하). 이미지는 아직 삽입하지 마세요.\n'+json.dumps(writer_context(title,topic,payload['evidence']),ensure_ascii=False))
                 payload.pop('image_candidates',None)
             html=article.get('content_html'); description=article.get('search_description')
             if isinstance(html,str) and html.strip():payload['draft_content']=html
@@ -147,6 +149,7 @@ class Generation:
             payload['reason']='이미지 픽셀 QA·ALT·caption·링크 검증 및 최종 검사 미완료'
             self.save(job,stage,'HOLD',payload)
         except Exception as exc:
+            if getattr(exc,'recovery_pack',None) is not None:payload['evidence']=exc.recovery_pack
             if getattr(exc,'attempts',None) is not None:payload['research_attempts']=exc.attempts
             if getattr(exc,'diagnostic',None):payload['error_diagnostic']=exc.diagnostic
             payload['reason']=str(exc); self.save(job,stage,'HOLD',payload)

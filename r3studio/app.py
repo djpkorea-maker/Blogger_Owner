@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev74 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev75 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -234,6 +234,10 @@ class App:
         text=ScrolledText(dialog,wrap='word',height=12);text.pack(fill='both',expand=True,padx=15,pady=8)
         text.insert('end','기존 글 번호: '+str(result['before'].get('id',''))+'\n입력한 새 제목: '+view['topic']+'\n생성된 제목: '+view['title']+'\n중단 단계: '+view['stage']+'\n보류 원인: '+view['reason']+'\n\nBlogger의 기존 글과 이미지는 변경되지 않았습니다.\n')
         from .presentation import diagnostic_lines
+        recovery=result.get('generation_evidence_recovery',{})
+        if recovery:
+            state={'STARTED':'진행 중','VERIFIED':'원문 검증 완료','FAILED':'근거 미확보 또는 오류로 종료'}.get(recovery.get('state'),'기록 확인 필요')
+            text.insert('end','\n확인된 원문으로 근거 재구성: '+state+' · 1회 한도\n')
         text.insert('end','\n'.join(diagnostic_lines(result.get('error_diagnostic',{}))))
         if view['can_resume']:text.insert('end','\n같은 작업 이어서 진행은 저장된 작업 번호와 입력 제목을 유지합니다.')
         else:text.insert('end','\n생성 작업 번호가 없습니다. 같은 제목의 저장 작업 확인 또는 제목 변경이 필요합니다.')
