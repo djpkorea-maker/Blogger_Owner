@@ -87,7 +87,7 @@ class Recovery:
         with self.store.db:
             proposal_id=self.store.db.execute('INSERT INTO repair_proposals(blog_id,post_id,created_at,status,payload) VALUES(?,?,?,?,?)',(self.adapter.blog_id,pid,now(),status,json.dumps(payload,ensure_ascii=False))).lastrowid
         return {'proposal_id':proposal_id,'status':status,**payload}
-    def apply_proposal(self,proposal_id):
+    def apply_proposal(self,proposal_id,expected_proposal_hash=None):
         row=self.store.db.execute('SELECT * FROM repair_proposals WHERE id=? AND blog_id=?',(proposal_id,self.adapter.blog_id)).fetchone()
         if not row or row['status']!='PASS':raise RecoveryHold('검증 PASS 수정안이 필요합니다.')
         from .finalize import corpus_hash
@@ -95,6 +95,7 @@ class Recovery:
         try:
             payload=json.loads(row['payload'])
             if not isinstance(payload,dict):raise ValueError()
+            if expected_proposal_hash is not None and payload.get('proposal_hash')!=expected_proposal_hash:raise RecoveryHold('검토 이후 수정안 변경: 새 수정안을 확인하세요.')
             plan=validate_plan(payload.get('plan'),self.adapter.blog_id,row['post_id'])
         except (ValueError,TypeError):raise RecoveryHold('수정안 기록 손상 또는 대상 불일치: 재검사 필요') from None
         posts=[dict(r) for r in self.store.db.execute('SELECT post_id,title,status,url,content FROM posts WHERE blog_id=? AND present=1',(self.adapter.blog_id,))]

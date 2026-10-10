@@ -26,7 +26,7 @@ class PreviewParts(HTMLParser):
     def handle_data(self,data):
         if not self.hidden:self.parts.append({'kind':'text','text':data})
 
-def preview_parts(content,reviews=(),proposed=False):
+def preview_parts(content,reviews=(),proposed=False,choices=None):
     """Display stored HTML attributes separately from unapplied AI suggestions."""
     from .captions import image_captions
     parts=PreviewParts(content).parts
@@ -41,7 +41,13 @@ def preview_parts(content,reviews=(),proposed=False):
         part['caption']=captions[index-1] if index<=len(captions) else ''
         part['caption_uncertain']=not bool(part['caption'])
         part['preview_file']=review.get('preview_file','');part['pixel_hash']=review.get('pixel_hash','')
-        suggestion=review.get('suggested_text',{})
+        choice=(choices or {}).get(str(index),{}) if proposed else {}
+        if choice and choice.get('expected_url')==part.get('src'):
+            candidate=choice.get('candidate',{})
+            if candidate.get('result')=='PASS' or choice.get('preview_only') and candidate.get('result')=='HOLD' and candidate.get('file') and candidate.get('info'):
+                part.update(alt=candidate.get('alt',''),caption=candidate.get('caption',''),caption_uncertain=not bool(candidate.get('caption')),candidate_status=candidate['result'],preview_only=choice.get('preview_only',False),
+                    preview_file=candidate['file'],pixel_hash=candidate['info']['pixel_hash'],selected_candidate=True)
+        suggestion={} if part.get('selected_candidate') else review.get('suggested_text',{})
         if proposed and isinstance(suggestion,dict):
             pending={key:suggestion[key] for key in ('alt','caption')
                 if isinstance(suggestion.get(key),str) and suggestion[key]!=part.get(key,'')}
@@ -64,18 +70,18 @@ def thumbnail_bytes(url,cache_dir,review=None,download=public_image_bytes):
     with Image.open(io.BytesIO(data)) as im:
         im=im.convert('RGB');im.thumbnail((420,260));out=io.BytesIO();im.save(out,format='PNG');return out.getvalue()
 
-def show_article_comparison(dialog,panes,original,proposed,reviews,cache_dir,download=public_image_bytes):
+def show_article_comparison(dialog,panes,original,proposed,reviews,cache_dir,download=public_image_bytes,choices=None):
     """Create ordered text/pixel previews and asynchronously fill image placeholders."""
     import tkinter as tk
     from tkinter import ttk
     from tkinter.scrolledtext import ScrolledText
     from PIL import ImageTk
-    events=queue.Queue();targets={};image_refs=[];widgets=[];parts_by_side=[]
-    dialog.preview_image_refs=image_refs;dialog.preview_widgets=widgets
+    events=queue.Queue();targets={};image_refs=getattr(dialog,"preview_image_refs",[]);widgets=[];parts_by_side=[]
+    dialog.preview_image_refs=image_refs;dialog.preview_widgets=getattr(dialog,"preview_widgets",[])
     for side,(label,content) in enumerate((('현재 글',original),('수정안',proposed))):
         frame=ttk.Frame(panes);panes.add(frame,weight=1)
         ttk.Label(frame,text=label,font=('',13,'bold')).pack(anchor='w')
-        parts=preview_parts(content,reviews,proposed=bool(side));parts_by_side.append(parts)
+        parts=preview_parts(content,reviews,proposed=bool(side),choices=choices);parts_by_side.append(parts)
         count=sum(part['kind']=='image' for part in parts)
         ttk.Label(frame,text=f'본문 이미지 {count}개 · ALT와 그림 설명을 아래에서 확인하세요.').pack(anchor='w')
         text=ScrolledText(frame,wrap='word',width=45);text.pack(fill='both',expand=True);widgets.append(text)
@@ -87,31 +93,35 @@ def show_article_comparison(dialog,panes,original,proposed,reviews,cache_dir,dow
             text.insert('end',f"\n\n[이미지 {part['index']}]\n",'image_meta')
             placeholder=ttk.Label(text,text='이미지 불러오는 중…')
             text.window_create('end',window=placeholder);text.insert('end','\n')
-            targets.setdefault(part.get('src',''),[]).append(placeholder)
+            key=(part.get('src',''),part.get('pixel_hash',''),part.get('preview_file',''))
+            targets.setdefault(key,[]).append(placeholder)
+            if part.get('selected_candidate'):text.insert('end',('미통과 후보 · 교체 불가' if part.get('candidate_status')=='HOLD' else '검토할 후보' if part.get('preview_only') else '선택한 후보')+' · 최종 검증 전 · Blogger 미반영\n','pending')
             text.insert('end','ALT: '+(part.get('alt') or '(없음)')+'\n','image_meta')
             text.insert('end','그림 설명: '+(part['caption'] or '(HTML에서 이미지별 연결 미확인 · 본문의 설명 문장도 확인하세요.)')+'\n','image_meta')
             for key,value in part.get('pending_text',{}).items():
                 text.insert('end',('ALT' if key=='alt' else '그림 설명')+' 수정 제안 · 아직 미반영: '+value+'\n','pending')
             text.insert('end','\n')
         text.config(state='disabled')
+    dialog.preview_widgets.extend(widgets)
     def worker():
         parts=[p for side in parts_by_side for p in side if p['kind']=='image']
-        for url in targets:
+        for key in targets:
+            url=key[0]
             try:
-                part=next(p for p in parts if p.get('src','')==url)
-                events.put((url,thumbnail_bytes(url,cache_dir,part,download),None))
+                part=next(p for p in parts if (p.get('src',''),p.get('pixel_hash',''),p.get('preview_file',''))==key)
+                events.put((key,thumbnail_bytes(url,cache_dir,part,download),None))
             except Exception:
-                events.put((url,None,'이미지 표시 실패 · ALT와 설명은 확인할 수 있습니다.'))
+                events.put((key,None,'이미지 표시 실패 · ALT와 설명은 확인할 수 있습니다.'))
     def poll():
         if not dialog.winfo_exists():return
         try:
             while True:
-                url,data,error=events.get_nowait()
+                key,data,error=events.get_nowait()
                 photo=None
                 if data:
                     with Image.open(io.BytesIO(data)) as im:photo=ImageTk.PhotoImage(im.copy(),master=dialog)
                     image_refs.append(photo)
-                for target in targets[url]:
+                for target in targets[key]:
                     if target.winfo_exists():target.config(image=photo or '',text=error or '')
         except queue.Empty:pass
         dialog.master.after(100,poll)

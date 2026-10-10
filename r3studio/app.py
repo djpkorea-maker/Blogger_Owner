@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev67 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev68 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -177,13 +177,49 @@ class App:
     def show_repair(self,result):
         dialog=tk.Toplevel(self.root);dialog.title('수정안 비교 · '+result['status']);dialog.geometry('1050x700')
         from .gates import Document
-        panes=ttk.Panedwindow(dialog,orient='horizontal');panes.pack(fill='both',expand=True,padx=10,pady=10)
+        tabs=ttk.Notebook(dialog);tabs.pack(fill='both',expand=True,padx=10,pady=10)
+        comparison=ttk.Frame(tabs);tabs.add(comparison,text='글·이미지 비교')
+        image_tab=ttk.Frame(tabs,padding=10);tabs.add(image_tab,text='이미지 수정')
+        panes=ttk.Panedwindow(comparison,orient='horizontal');panes.pack(fill='both',expand=True)
         original=result['before'].get('content','');proposed=result.get('plan',{}).get('proposal',{}).get('content',result.get('proposed_content',''))
         from .preview import show_article_comparison
-        show_article_comparison(dialog,panes,original,proposed,result.get('image_review',{}).get('items',[]),self.base/'image_cache')
+        show_article_comparison(dialog,panes,original,proposed,result.get('image_review',{}).get('items',[]),self.base/'image_cache',choices=result.get('image_choices',{}) if result['status']!='PASS' else None)
         ttk.Label(dialog,text='수정안 상태: '+('최종 검증 통과' if result['status']=='PASS' else '검증 미완료 · 미반영 제안은 적용 내용과 구분해 표시합니다.'),wraplength=1000).pack(fill='x',padx=10)
         ttk.Label(dialog,text=result.get('reason') or '수정 이유: '+' / '.join(str(x) for x in result.get('changes',[])),wraplength=1000).pack(fill='x',padx=10,pady=8)
-        def apply():dialog.destroy();self.start_ai('apply_repair',result['proposal_id'])
+        from .gates import Document
+        count=len(Document(proposed).images);slot=tk.IntVar(value=1)
+        controls=ttk.Frame(image_tab);controls.pack(fill='x',pady=6)
+        ttk.Label(controls,text='수정할 이미지:').pack(side='left')
+        ttk.Combobox(controls,textvariable=slot,values=list(range(1,count+1)),state='readonly',width=5).pack(side='left',padx=8)
+        ttk.Label(image_tab,text='후보를 먼저 검사합니다. 본문 관련성·실제 픽셀·ALT·설명이 통과한 후보만 선택할 수 있습니다.',wraplength=900).pack(anchor='w',pady=8)
+        def image_action(action):
+            if self.busy:return
+            value={'proposal_id':result['proposal_id'],'slot':slot.get()}
+            if action=='repair_image_import':
+                path=filedialog.askopenfilename(parent=dialog,title='교체할 이미지 선택',filetypes=[('이미지','*.png *.jpg *.jpeg *.webp')])
+                if not path:return
+                value['path']=path
+            dialog.destroy();self.start_ai(action,value)
+        for label,action in [('이미지 수정 · 파일 선택','repair_image_import'),('이미지 재생성','repair_image_generate'),('ALT·그림 설명 재생성','repair_alt'),('이 후보로 교체','repair_image_choose'),('이미지 취소 · 기존 이미지 유지','repair_image_cancel'),('수정안 최종 검증','repair_validate')]:
+            ttk.Button(image_tab,text=label,command=lambda a=action:image_action(a),state='normal' if count else 'disabled').pack(anchor='w',pady=4)
+        ttk.Label(image_tab,text='교체 이미지는 최종 검증 때 공개 이미지 저장소에 업로드합니다. Blogger 글은 검토한 수정안 적용 버튼을 누르기 전까지 바뀌지 않습니다.',wraplength=900).pack(anchor='w',pady=8)
+        info=ScrolledText(image_tab,wrap='word',height=9);info.pack(fill='both',expand=True,pady=8)
+        for index,item in enumerate(Document(proposed).images,1):
+            key=str(index);candidate=result.get('image_edit_candidates',{}).get(key,{})
+            selected=result.get('image_choices',{}).get(key,{})
+            info.insert('end',f'이미지 {index} · '+('후보 선택됨 · 최종 검증 전' if selected and result['status']!='PASS' else '현재 수정안 이미지')+'\n')
+            if candidate:
+                info.insert('end','새 후보 검사: '+candidate.get('result','HOLD')+'\nALT: '+candidate.get('alt','')+'\n그림 설명: '+candidate.get('caption','')+'\n'+candidate.get('reason','')+'\n')
+            info.insert('end','\n')
+        info.config(state='disabled')
+        # Preview the newest candidate locally before the user chooses it.
+        candidates=result.get('image_edit_candidates',{})
+        if candidates:
+            candidate_tab=ttk.Frame(tabs);tabs.add(candidate_tab,text='생성·수정 후보 보기')
+            candidate_panes=ttk.Panedwindow(candidate_tab,orient='horizontal');candidate_panes.pack(fill='both',expand=True)
+            candidate_choices={k:{'candidate':c,'expected_url':Document(proposed).images[int(k)-1].get('src',''),'preview_only':True} for k,c in candidates.items() if c.get('file') and c.get('info') and k.isdigit() and 1<=int(k)<=count}
+            show_article_comparison(dialog,candidate_panes,proposed,proposed,result.get('image_review',{}).get('items',[]),self.base/'image_cache',choices=candidate_choices)
+        def apply():dialog.destroy();self.start_ai('apply_repair',{'id':result['proposal_id'],'expected':result.get('proposal_hash')})
         ttk.Button(dialog,text='검토한 수정안 적용',command=apply,state='normal' if result['status']=='PASS' else 'disabled').pack(pady=10)
         return dialog
     def show_backups(self):
@@ -323,7 +359,7 @@ class App:
             from .ai import Gemini,AIError as GeminiError
             from .evidence import collect_cached,EvidenceHold
             from .generation import Generation
-            store=Store(str(self.base/'studio.sqlite3'));task=TaskLog(store,{'generate':'새 글 생성','images':'이미지 후보 검사','repair':'기존 글 수정안 생성','apply_repair':'수정안 적용','rollback':'백업 복원','jobs':'보류 목록 조회','load_job':'저장 작업 조회','resume':'이어서 작성','finalize':'최종 검사','generate_images':'이미지 자동 생성','upload_images':'이미지 업로드','draft':'초안 저장','publish':'공개 발행','schedule':'예약 저장','deep':'심층 검사','reconcile':'이전 저장 결과 재확인','reconcile_apply':'수정 결과 확인','reconcile_images':'이미지 업로드 결과 확인','execute_plan':'검토한 저장 계획 실행'}.get(action,'작업'))
+            store=Store(str(self.base/'studio.sqlite3'));task=TaskLog(store,{'generate':'새 글 생성','images':'이미지 후보 검사','repair':'기존 글 수정안 생성','apply_repair':'수정안 적용','rollback':'백업 복원','jobs':'보류 목록 조회','load_job':'저장 작업 조회','resume':'이어서 작성','finalize':'최종 검사','generate_images':'이미지 자동 생성','upload_images':'이미지 업로드','draft':'초안 저장','publish':'공개 발행','schedule':'예약 저장','deep':'심층 검사','reconcile':'이전 저장 결과 재확인','reconcile_apply':'수정 결과 확인','reconcile_images':'이미지 업로드 결과 확인','repair_image_import':'수정 이미지 후보 검사','repair_image_generate':'수정 이미지 재생성','repair_alt':'ALT·설명 재생성','repair_image_choose':'이미지 후보 선택','repair_image_cancel':'이미지 후보 취소','repair_validate':'수정안 최종 검증','execute_plan':'검토한 저장 계획 실행'}.get(action,'작업'))
             if action in ('jobs','load_job'):
                 from .local_jobs import read_jobs
                 self.cancel_token.checkpoint()
@@ -353,7 +389,35 @@ class App:
             # Refresh Blogger before sending local content to any generation/check request.
             self.events.put(('progress','최신 Blogger 상태 동기화 중…'))
             self.cancel_token.checkpoint()
-            self.sync_posts(store,adapter,adapter.blog_id,selected_post=value if action in ('deep','repair') else None);self.cancel_token.checkpoint(); run_checks(store,adapter.blog_id,force_recheck=True)
+            selected=value if action in ('deep','repair') else None
+            if action.startswith('repair_image_') or action in ('repair_alt','repair_validate'):
+                repair_row=store.db.execute('SELECT post_id FROM repair_proposals WHERE id=? AND blog_id=?',(value['proposal_id'],adapter.blog_id)).fetchone()
+                if not repair_row:raise ValueError('수정안 기록 없음')
+                selected=repair_row['post_id']
+            self.sync_posts(store,adapter,adapter.blog_id,selected_post=selected);self.cancel_token.checkpoint(); run_checks(store,adapter.blog_id,force_recheck=True)
+            if action.startswith('repair_image_') or action in ('repair_alt','repair_validate'):
+                from .repair_images import RepairImages
+                from .bridge import WriteBridgeAdapter
+                service=RepairImages(store,WriteBridgeAdapter.from_environment(),ai,self.base/'image_cache',progress)
+                try:
+                    if action=='repair_validate':result=service.validate(value['proposal_id'])
+                    else:
+                        generator=None
+                        if action=='repair_image_generate':
+                            from .imagegen import Generator
+                            generator=Generator.from_environment();original_transport=generator.transport
+                            def guarded_image(request):
+                                self.cancel_token.checkpoint();response=original_transport(request);self.cancel_token.checkpoint();return response
+                            generator.transport=guarded_image
+                        op={'repair_image_import':'import','repair_image_generate':'generate','repair_alt':'alt','repair_image_choose':'choose','repair_image_cancel':'cancel'}[action]
+                        result=service.operate(value['proposal_id'],op,value['slot'],value.get('path'),generator)
+                except Cancelled:raise
+                except Exception as error:
+                    _,payload=service.load(value['proposal_id']);payload['reason']=str(error)
+                    if getattr(error,'diagnostic',None):payload['error_diagnostic']=error.diagnostic
+                    result=service.save(value['proposal_id'],payload)
+                    finish_error(task,error);self.events.put(('repair_ready',result));return
+                task.finish('COMPLETED');self.events.put(('repair_ready',result));return
             if action in ('repair','apply_repair','rollback','reconcile_apply'):
                 from .recovery import Recovery,rollback_verified
                 from .bridge import WriteBridgeAdapter
@@ -369,7 +433,7 @@ class App:
                         from .recovery import reconcile_rollback
                         result=reconcile_rollback(store,writer,value)
                     else:result=Apply(store,writer).reconcile(value)
-                elif action=='apply_repair':result=Recovery(store,ai,writer,progress).apply_proposal(value)
+                elif action=='apply_repair':result=Recovery(store,ai,writer,progress).apply_proposal(value['id'],expected_proposal_hash=value['expected'])
                 else:result=rollback_verified(store,writer,value)
             elif action in ('jobs','load_job','resume','finalize','generate_images','upload_images','draft','publish','schedule','reconcile','reconcile_images','execute_plan'):
                 generation=Generation(store,ai,adapter.blog_id,progress)

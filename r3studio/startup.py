@@ -100,6 +100,17 @@ def smoke_test():
             if len(dialog.preview_image_refs)!=1:raise RuntimeError('수정안 비교 이미지 표시 실패')
             if len(dialog.preview_widgets)!=2 or any('ALT: 하부 점검 사진' not in w.get('1.0','end') or '그림 설명: 그림 1.' not in w.get('1.0','end') for w in dialog.preview_widgets):raise RuntimeError('수정안 비교 ALT·설명 표시 실패')
             dialog.destroy()
+            # Check image-control tabs and retain photos across both previews.
+            candidate={'result':'PASS','file':str(image_path),'info':inspect_bytes(pixels),'alt':'새 후보의 하부 점검 사진','caption':'새 후보의 실제 점검 장면을 설명합니다.'}
+            dialog=app.show_repair({'status':'HOLD','before':{'content':html},'proposed_content':html,'proposal_id':0,
+                'image_review':{'items':[{'index':1,'url':'https://lh3.googleusercontent.com/smoke','preview_file':str(image_path),'pixel_hash':pixel_hash}]},
+                'image_edit_candidates':{'1':candidate},'image_choices':{'1':{'candidate':candidate,'expected_url':'https://lh3.googleusercontent.com/smoke','mode':'replace'}}})
+            deadline=time.monotonic()+5
+            while len(dialog.preview_image_refs)<2 and time.monotonic()<deadline:
+                root.update();time.sleep(0.02)
+            if len(dialog.preview_image_refs)<2 or len(dialog.preview_widgets)!=4:raise RuntimeError('이미지 수정 후보 탭·사진 유지 실패')
+            if '선택한 후보' not in dialog.preview_widgets[1].get('1.0','end'):raise RuntimeError('미반영 이미지 후보 상태 표시 실패')
+            dialog.destroy()
             settings=Settings(Path(folder)/'smoke-settings.json')
             settings.save({'R3_BRIDGE_SECRET':'local-smoke-test-only','R3_START_MODE':'DEMO'})
             if settings.load().get('R3_BRIDGE_SECRET')!='local-smoke-test-only':raise RuntimeError('DPAPI 복호화 시험 실패')

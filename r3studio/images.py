@@ -51,7 +51,7 @@ def validate_text(text):
 
 class ImageQA:
     def __init__(self,store,ai): self.store,self.ai=store,ai
-    def check(self,path,title,content,blog_id,post_id):
+    def check(self,path,title,content,blog_id,post_id,force=False):
         path=Path(path)
         if path.stat().st_size>2*1024*1024: raise ImageHold('이미지 최대 2MB')
         data=path.read_bytes(); info=inspect_bytes(data)
@@ -59,7 +59,7 @@ class ImageQA:
         db=self.store.db
         db.execute('CREATE TABLE IF NOT EXISTS image_qa_cache(pixel_hash TEXT,context_hash TEXT,payload TEXT,PRIMARY KEY(pixel_hash,context_hash))');db.commit()
         old=db.execute('SELECT payload FROM image_qa_cache WHERE pixel_hash=? AND context_hash=?',(info['pixel_hash'],context)).fetchone()
-        if old:
+        if old and not force:
             result=json.loads(old[0]);result['file']=str(path.resolve());result['info']=info
             self.record(blog_id,post_id,result,reused=True);return result,True
         review=None
