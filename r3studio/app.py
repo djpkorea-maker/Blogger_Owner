@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev69 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev70 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -80,11 +80,15 @@ class App:
         self.google_notes=ScrolledText(self.google,wrap='word');self.google_notes.pack(fill='both',expand=True)
         controls=ttk.Frame(self.inspect); controls.pack(fill='x')
         self.button=ttk.Button(controls,text='LIVE 동기화 + Fast 검사',command=self.start); self.button.pack(side='left')
-        ttk.Label(controls,text='시험판: 매번 전체 조회·Fast 재검사').pack(side='left',padx=15)
+        ttk.Label(controls,text='Dev70 조회·검사 기록 보관 · Dev71부터 재사용').pack(side='left',padx=15)
         ttk.Button(controls,text='수정안 만들기',command=self.start_repair).pack(side='left')
         ttk.Button(controls,text='수정·복원 결과 확인',command=self.start_apply_reconcile).pack(side='left',padx=5)
         ttk.Button(controls,text='수정 백업 복원',command=self.start_rollback).pack(side='left',padx=5)
         ttk.Button(controls,text='선택 글 심층 검사',command=self.start_deep).pack(side='right')
+        whole_controls=ttk.Frame(self.inspect);whole_controls.pack(fill='x',pady=(6,0))
+        ttk.Button(whole_controls,text='본문·이미지 전체 새로 만들기',command=self.start_replacement).pack(side='left')
+        ttk.Button(whole_controls,text='전체 교체 작업 불러오기',command=self.show_replacement_jobs).pack(side='left',padx=8)
+        ttk.Label(whole_controls,text='선택한 기존 글의 번호·주소 유지 · 검토 후 적용').pack(side='left',padx=10)
         self.status=ttk.Label(self.inspect,textvariable=self.status_text,wraplength=1000); self.status.pack(anchor='w',pady=10)
         self.inspect_panes=ttk.Panedwindow(self.inspect,orient='vertical');self.inspect_panes.pack(fill='both',expand=True)
         table_frame=ttk.Frame(self.inspect_panes);self.inspect_panes.add(table_frame,weight=3)
@@ -132,7 +136,8 @@ class App:
         def progress(stage,index,total):
             text=f'{stage} {index}/{total}' if total else f'{stage} · {index}개 확인'
             self.events.put(('progress',text))
-        return Sync(store,adapter,blog_id,progress,self.cancel_token.checkpoint,force_refresh=selected_post is None,refresh_ids=() if selected_post is None else (selected_post,)).run()
+        from .cache_policy import force_whole_review
+        return Sync(store,adapter,blog_id,progress,self.cancel_token.checkpoint,force_refresh=selected_post is None and force_whole_review(),refresh_ids=() if selected_post is None else (selected_post,)).run()
     def cancel_current(self):
         if self.busy:
             self.cancel_token.request();self.set_status(text='중단 요청됨 · 진행 중인 요청 결과 확인 후 멈춥니다.')
@@ -154,6 +159,32 @@ class App:
         if not selected or self.demo.get():
             messagebox.showinfo('R3.0','실제 글을 조회하고 수정할 글을 선택하세요.');return
         self.start_ai('repair',selected[0])
+    def show_replacement_jobs(self):
+        if self.busy:return
+        blog_id=os.environ.get('R3_BLOG_ID','')
+        if not blog_id:messagebox.showinfo('R3.0','연결 설정에 블로그 ID를 입력하세요.');return
+        store=Store(str(self.base/'studio.sqlite3'))
+        try:
+            from .replacement import saved_replacements
+            saved=saved_replacements(store,blog_id)
+        finally:store.close()
+        if not saved:messagebox.showinfo('R3.0','보관된 전체 교체 작업이 없습니다.');return
+        window=tk.Toplevel(self.root);window.title('보관된 전체 교체 작업');window.geometry('900x420')
+        table=ttk.Treeview(window,columns=('post','job','status','title'),show='headings');table.pack(fill='both',expand=True,padx=10,pady=10)
+        for key,label in [('post','기존 글 번호'),('job','생성 작업 번호'),('status','상태'),('title','새 제목 / 주제')]:table.heading(key,text=label)
+        for item in saved:table.insert('', 'end',iid=str(item['proposal_id']),values=(item['before']['id'],item.get('replacement_job_id',''),item['status'],item.get('proposed_title',item.get('replacement_topic',''))))
+        def load():
+            selection=table.selection()
+            if selection:self.show_repair(next(item for item in saved if str(item['proposal_id'])==selection[0]));window.destroy()
+        ttk.Button(window,text='선택 작업 불러오기',command=load).pack(pady=8)
+    def start_replacement(self):
+        if self.busy:return
+        selected=self.table.selection()
+        if not selected or self.demo.get():
+            messagebox.showinfo('R3.0','실제 블로그 글을 조회하고 전체 교체할 글을 선택하세요.');return
+        post_id=selected[0]
+        topic=simpledialog.askstring('본문·이미지 전체 새로 만들기','새로 작성할 주제를 입력하세요.\n기존 글 번호·주소를 유지하며, 생성 후 검토와 최종 검증을 거칩니다.',initialvalue=self.results.get(post_id,{}).get('title',''),parent=self.root)
+        if topic and topic.strip():self.start_ai('replace_post',{'post_id':post_id,'topic':topic.strip()})
     def start_apply_reconcile(self):
         if self.busy or self.demo.get():return
         audit=simpledialog.askinteger('수정 결과 확인','확인할 수정 또는 복원 기록 번호를 입력하세요.',parent=self.root)
@@ -186,6 +217,16 @@ class App:
         for child in dialog.winfo_children():child.destroy()
         dialog.preview_widgets=[];dialog.preview_image_refs=[]
         dialog.title('수정안 비교 · '+result['status'])
+        def replace_all():
+            if self.busy:return
+            topic=simpledialog.askstring('본문·이미지 전체 새로 만들기','새로 작성할 주제를 입력하세요.\n새 본문과 이미지 2장을 만들고, 기존 글 번호·주소를 유지합니다.\n생성만으로 Blogger 글이 변경되지는 않습니다.',initialvalue=result.get('replacement_topic',result['before'].get('title','')),parent=dialog)
+            if topic and topic.strip():self.start_ai('replace_all',{'proposal_id':pid,'topic':topic.strip()})
+        replacement_controls=ttk.Frame(dialog);replacement_controls.pack(fill='x',padx=10,pady=5)
+        ttk.Button(replacement_controls,text='본문·이미지 전체 새로 만들기',command=replace_all).pack(side='left')
+        if result.get('replacement_job_id'):
+            ttk.Button(replacement_controls,text='전체 교체 작업 이어서 진행',command=lambda:self.start_ai('replace_resume',{'proposal_id':pid}) if not self.busy else None).pack(side='left',padx=8)
+        ttk.Button(replacement_controls,text='수정안 최종 검증',command=lambda:self.start_ai('repair_validate',{'proposal_id':pid,'slot':1}) if not self.busy else None).pack(side='right')
+        ttk.Label(dialog,text='기존 제목: '+result['before'].get('title','')+'\n새 제목: '+result.get('proposed_title',result['before'].get('title',''))+'\n기존 상태: '+result['before'].get('status','')+' · 예약/발행 시각: '+str(result['before'].get('published','미확인')),wraplength=1000).pack(fill='x',padx=10)
         from .gates import Document
         tabs=ttk.Notebook(dialog);tabs.pack(fill='both',expand=True,padx=10,pady=10)
         comparison=ttk.Frame(tabs);tabs.add(comparison,text='글·이미지 비교')
@@ -221,7 +262,7 @@ class App:
                 if not path:return
                 value['path']=path
             dialog.selected_image_slot=slot.get();self.start_ai(action,value)
-        for label,action in [('이미지 수정 · 파일 선택','repair_image_import'),('이미지 재생성','repair_image_generate'),('ALT·그림 설명 재생성','repair_alt'),('이 후보로 교체','repair_image_choose'),('이미지 취소 · 기존 이미지 유지','repair_image_cancel'),('수정안 최종 검증','repair_validate')]:
+        for label,action in [('이미지 수정 · 파일 선택','repair_image_import'),('이미지 재생성','repair_image_generate'),('ALT·그림 설명 재생성','repair_alt'),('이 후보로 교체','repair_image_choose'),('이미지 후보 선택 취소' if result.get('mode')=='REPLACEMENT' else '이미지 취소 · 기존 이미지 유지','repair_image_cancel'),('수정안 최종 검증','repair_validate')]:
             ttk.Button(image_tab,text=label,command=lambda a=action:image_action(a),state='normal' if count else 'disabled').pack(anchor='w',pady=4)
         ttk.Label(image_tab,text='교체 이미지는 최종 검증 때 공개 이미지 저장소에 업로드합니다. Blogger 글은 검토한 수정안 적용 버튼을 누르기 전까지 바뀌지 않습니다.',wraplength=900).pack(anchor='w',pady=8)
         info=ScrolledText(image_tab,wrap='word',height=4);info.pack(fill='both',expand=True,pady=8)
@@ -263,7 +304,9 @@ class App:
             candidate_panes=ttk.Panedwindow(candidate_tab,orient='horizontal');candidate_panes.pack(fill='both',expand=True)
             candidate_choices={k:{'candidate':c,'expected_url':Document(proposed).images[int(k)-1].get('src',''),'preview_only':True} for k,c in candidates.items() if c.get('file') and c.get('info') and k.isdigit() and 1<=int(k)<=count}
             show_article_comparison(dialog,candidate_panes,proposed,proposed,result.get('image_review',{}).get('items',[]),self.base/'image_cache',choices=candidate_choices)
-        def apply():editor.destroy();dialog.destroy();self.start_ai('apply_repair',{'id':result['proposal_id'],'expected':result.get('proposal_hash')})
+        def apply():
+            if self.busy:return
+            editor.destroy();dialog.destroy();self.start_ai('apply_repair',{'id':result['proposal_id'],'expected':result.get('proposal_hash')})
         ttk.Button(dialog,text='검토한 수정안 적용',command=apply,state='normal' if result['status']=='PASS' else 'disabled').pack(pady=10)
         return dialog
     def show_backups(self):
@@ -403,7 +446,7 @@ class App:
             from .ai import Gemini,AIError as GeminiError
             from .evidence import collect_cached,EvidenceHold
             from .generation import Generation
-            store=Store(str(self.base/'studio.sqlite3'));task=TaskLog(store,{'generate':'새 글 생성','images':'이미지 후보 검사','repair':'기존 글 수정안 생성','apply_repair':'수정안 적용','rollback':'백업 복원','jobs':'보류 목록 조회','load_job':'저장 작업 조회','resume':'이어서 작성','finalize':'최종 검사','generate_images':'이미지 자동 생성','upload_images':'이미지 업로드','draft':'초안 저장','publish':'공개 발행','schedule':'예약 저장','deep':'심층 검사','reconcile':'이전 저장 결과 재확인','reconcile_apply':'수정 결과 확인','reconcile_images':'이미지 업로드 결과 확인','repair_image_import':'수정 이미지 후보 검사','repair_image_generate':'수정 이미지 재생성','repair_alt':'ALT·설명 재생성','repair_image_choose':'이미지 후보 선택','repair_image_cancel':'이미지 후보 취소','repair_validate':'수정안 최종 검증','execute_plan':'검토한 저장 계획 실행'}.get(action,'작업'))
+            store=Store(str(self.base/'studio.sqlite3'));task=TaskLog(store,{'generate':'새 글 생성','images':'이미지 후보 검사','repair':'기존 글 수정안 생성','apply_repair':'수정안 적용','rollback':'백업 복원','jobs':'보류 목록 조회','load_job':'저장 작업 조회','resume':'이어서 작성','finalize':'최종 검사','generate_images':'이미지 자동 생성','upload_images':'이미지 업로드','draft':'초안 저장','publish':'공개 발행','schedule':'예약 저장','deep':'심층 검사','reconcile':'이전 저장 결과 재확인','reconcile_apply':'수정 결과 확인','reconcile_images':'이미지 업로드 결과 확인','repair_image_import':'수정 이미지 후보 검사','repair_image_generate':'수정 이미지 재생성','repair_alt':'ALT·설명 재생성','repair_image_choose':'이미지 후보 선택','repair_image_cancel':'이미지 후보 취소','repair_validate':'수정안 최종 검증','replace_post':'본문·이미지 전체 새로 만들기','replace_all':'본문·이미지 전체 새로 만들기','replace_resume':'전체 교체 작업 이어서 진행','execute_plan':'검토한 저장 계획 실행'}.get(action,'작업'))
             if action in ('jobs','load_job'):
                 from .local_jobs import read_jobs
                 self.cancel_token.checkpoint()
@@ -434,11 +477,26 @@ class App:
             self.events.put(('progress','최신 Blogger 상태 동기화 중…'))
             self.cancel_token.checkpoint()
             selected=value if action in ('deep','repair') else None
-            if action.startswith('repair_image_') or action in ('repair_alt','repair_validate'):
+            if action=='replace_post':selected=value['post_id']
+            if action.startswith('repair_image_') or action in ('repair_alt','repair_validate','replace_all','replace_resume'):
                 repair_row=store.db.execute('SELECT post_id FROM repair_proposals WHERE id=? AND blog_id=?',(value['proposal_id'],adapter.blog_id)).fetchone()
                 if not repair_row:raise ValueError('수정안 기록 없음')
                 selected=repair_row['post_id']
-            self.sync_posts(store,adapter,adapter.blog_id,selected_post=selected);self.cancel_token.checkpoint(); run_checks(store,adapter.blog_id,force_recheck=True)
+            from .cache_policy import force_whole_review
+            self.sync_posts(store,adapter,adapter.blog_id,selected_post=selected);self.cancel_token.checkpoint(); run_checks(store,adapter.blog_id,force_recheck=selected is None and force_whole_review())
+            if action in ('replace_post','replace_all','replace_resume'):
+                from .replacement import Replacement
+                from .bridge import WriteBridgeAdapter
+                from .imagegen import Generator
+                generator=Generator.from_environment();original_transport=generator.transport
+                def guarded_replacement_image(request):
+                    self.cancel_token.checkpoint();response=original_transport(request);self.cancel_token.checkpoint();return response
+                generator.transport=guarded_replacement_image
+                service=Replacement(store,WriteBridgeAdapter.from_environment(),ai,self.base/'image_cache',progress)
+                if action=='replace_post':result=service.start_post(value['post_id'],value['topic'],generator)
+                elif action=='replace_all':result=service.start(value['proposal_id'],value['topic'],generator)
+                else:result=service.resume(value['proposal_id'],generator)
+                task.finish('COMPLETED');self.events.put(('repair_ready',result));return
             if action.startswith('repair_image_') or action in ('repair_alt','repair_validate'):
                 from .repair_images import RepairImages
                 from .bridge import WriteBridgeAdapter
@@ -583,7 +641,10 @@ class App:
             adapter=DemoAdapter() if demo else BridgeAdapter.from_environment()
             blog_id='DEMO' if demo else adapter.blog_id
             self.cancel_token.checkpoint()
-            sync=self.sync_posts(store,adapter,blog_id);self.cancel_token.checkpoint(); checks=run_checks(store,blog_id,force_recheck=True)
+            from .cache_policy import force_whole_review
+            sync=self.sync_posts(store,adapter,blog_id);self.cancel_token.checkpoint(); checks=run_checks(store,blog_id,force_recheck=force_whole_review())
+            from .cache_policy import remember_checkpoint
+            remember_checkpoint(store,blog_id,sync,checks)
             rows=[]
             for row in store.db.execute('SELECT * FROM posts WHERE blog_id=? AND present=1 ORDER BY CASE WHEN grade LIKE "EMPTY%" OR grade="INCOMPLETE_DRAFT" THEN 0 WHEN status="SCHEDULED" THEN 1 ELSE 2 END,post_id',(blog_id,)):
                 data=dict(row); latest=store.db.execute('SELECT details FROM recovery_checks WHERE blog_id=? AND post_id=? ORDER BY id DESC LIMIT 1',(blog_id,data['post_id'])).fetchone()

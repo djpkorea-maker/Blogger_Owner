@@ -1,0 +1,133 @@
+"""Generate a complete replacement tied to one existing post, never a new post."""
+import json
+from pathlib import Path
+from .sync import now,digest,post_hash
+from .generation import Generation
+from .recovery import Recovery
+from .repair_images import RepairImages
+from .images import ImageHold,inspect_bytes
+from .imagegen import generate_candidates
+from .gates import Document
+from .tasks import Cancelled
+
+def replacement_target(store,blog_id,payload):
+    target=payload.get('replacement_target')
+    if target is None:return None
+    if not isinstance(target,dict) or target.get('blog_id')!=str(blog_id) or not isinstance(target.get('post_id'),str):raise ImageHold('전체 교체 대상 기록 불일치')
+    row=store.db.execute('SELECT post_id,payload,status FROM repair_proposals WHERE id=? AND blog_id=?',(target.get('proposal_id'),str(blog_id))).fetchone()
+    if not row or row['post_id']!=target['post_id']:raise ImageHold('전체 교체 대상 수정안 없음')
+    p=json.loads(row['payload'])
+    if p.get('mode')!='REPLACEMENT' or p.get('expected_hash')!=target.get('expected_hash') or post_hash(p['before'])!=target.get('expected_hash'):raise ImageHold('전체 교체 원본 기록 불일치')
+    return target
+
+def saved_replacements(store,blog_id):
+    if not store.db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='repair_proposals'").fetchone():return []
+    result=[]
+    for row in store.db.execute('SELECT * FROM repair_proposals WHERE blog_id=? AND status IN ("HOLD","PASS") ORDER BY id DESC',(str(blog_id),)):
+        try:
+            p=json.loads(row['payload'])
+            if p.get('mode')!='REPLACEMENT' or str(p['before']['id'])!=row['post_id'] or p.get('expected_hash')!=post_hash(p['before']):continue
+            result.append({'proposal_id':row['id'],'status':row['status'],**p})
+        except (ValueError,TypeError,KeyError):continue
+    return result
+
+def text_ready(payload):
+    from .deep import REQUIRED
+    review=payload.get('deep',{}).get('review',{})
+    allowed={'이미지 2장 미만','내부링크 확인 필요','외부 근거 링크 확인 필요'}
+    return (isinstance(review,dict) and all(review.get(k)=='PASS' for k in REQUIRED)
+        and type(review.get('score')) in (int,float) and review['score']>=85
+        and review.get('severity')=='none' and not review.get('issues') and not review.get('findings') and not review.get('unsupported_claims')
+        and not (set(payload.get('fast',{}).get('issues',[]))-allowed))
+
+class Replacement:
+    def __init__(self,store,adapter,ai,cache_dir,progress=lambda *a:None):
+        self.store,self.adapter,self.ai=store,adapter,ai;self.cache=Path(cache_dir);self.progress=progress
+        Recovery(store,ai,adapter,progress)
+        self.images=RepairImages(store,adapter,ai,cache_dir,progress)
+    def start_post(self,post_id,topic,generator):
+        if not isinstance(topic,str) or not topic.strip():raise ImageHold('새로 작성할 주제를 입력하세요.')
+        before=self.adapter.get_post(str(post_id))
+        if str(before.get('id'))!=str(post_id):raise ImageHold('전체 교체 대상 글 번호 불일치')
+        original={'before':before,'expected_hash':post_hash(before),'reason':'전체 교체 전 원본 보관'}
+        with self.store.db:
+            seed=self.store.db.execute('INSERT INTO repair_proposals(blog_id,post_id,created_at,status,payload) VALUES(?,?,?,?,?)',(self.adapter.blog_id,str(post_id),now(),'HOLD',json.dumps(original,ensure_ascii=False))).lastrowid
+        return self.start(seed,topic,generator)
+    def start(self,proposal_id,topic,generator):
+        if not isinstance(topic,str) or not topic.strip():raise ImageHold('새로 작성할 주제를 입력하세요.')
+        _,old=self.images.load(proposal_id);self.images.baseline(old)
+        p={'mode':'REPLACEMENT','before':old['before'],'expected_hash':old['expected_hash'],'replacement_topic':topic.strip(),'site_url':old['before'].get('url','') or next((r[0] for r in self.store.db.execute('SELECT url FROM posts WHERE blog_id=? AND present=1 AND status="LIVE" AND url!=""',(self.adapter.blog_id,))),''),'changes':['제목·본문·이미지 2장·ALT·그림 설명 전체 교체'],'reason':'전체 교체 생성 준비 · Blogger 미반영'}
+        with self.store.db:
+            pid=self.store.db.execute('INSERT INTO repair_proposals(blog_id,post_id,created_at,status,payload) VALUES(?,?,?,?,?)',(self.adapter.blog_id,str(p['before']['id']),now(),'HOLD',json.dumps(p,ensure_ascii=False))).lastrowid
+        try:
+            g=Generation(self.store,self.ai,self.adapter.blog_id,self.progress)
+            job=g.reserve(topic.strip());p['replacement_job_id']=job
+            self.images.save(pid,p)
+            target={'proposal_id':pid,'blog_id':self.adapter.blog_id,'post_id':str(p['before']['id']),'expected_hash':p['expected_hash']}
+            g.save(job,'기존 글 전체 교체 준비','HOLD',{'topic':topic.strip(),'replacement_target':target})
+            return self.resume(pid,generator)
+        except Cancelled:raise
+        except Exception as exc:
+            p['reason']=str(exc);return self.images.save(pid,p)
+    def resume(self,pid,generator):
+        row,p=self.images.load(pid);self.images.baseline(p)
+        if p.get('mode')!='REPLACEMENT':raise ImageHold('전체 교체 작업을 선택하세요.')
+        if p.get('replacement_preview_ready'):return {'proposal_id':pid,'status':row['status'],**p}
+        g=Generation(self.store,self.ai,self.adapter.blog_id,self.progress)
+        job=p.get('replacement_job_id')
+        if type(job) is not int:raise ImageHold('전체 교체 생성 작업 기록 없음: 새 작업 필요')
+        try:
+            payload=g.load_job(job)['payload'];target=replacement_target(self.store,self.adapter.blog_id,payload)
+            if target['proposal_id']!=pid:raise ImageHold('다른 수정안의 생성 작업: 진행 중지')
+            self.progress('전체 교체 본문 생성',0,1)
+            if not text_ready(payload):
+                g.resume(job);payload=g.load_job(job)['payload']
+            if payload.get('content'):
+                p['proposed_title']=payload['title'];p['proposed_content']=payload['content'];p['search_description']=payload.get('search_description','');p['evidence']=payload.get('evidence',{})
+                self.images.save(pid,p)
+            if not text_ready(payload):raise ImageHold(payload.get('reason','본문 품질 검사 미완료'))
+            if not payload.get('replacement_links_ready'):
+                from .links import append_verified_candidates
+                peers=[dict(r) for r in self.store.db.execute('SELECT post_id,title,content,url,status FROM posts WHERE blog_id=? AND present=1 AND post_id!=?',(self.adapter.blog_id,target['post_id']))]
+                self.progress('관련 LIVE 내부링크·공식 근거 배치',0,1)
+                payload['content']=append_verified_candidates(self.ai,payload['title'],payload['content'],peers,payload['evidence'])
+                payload['replacement_links_ready']=True
+                g.save(job,'전체 교체 링크 배치','HOLD',payload)
+            candidates=payload.get('image_candidates',[])
+            if len(candidates)!=2 or any(c.get('result')!='PASS' for c in candidates):
+                generate_candidates(g,generator,job,self.cache)
+                payload=g.load_job(job)['payload'];candidates=payload.get('image_candidates',[])
+            # Local preview placeholders are never considered public image URLs.
+            content=payload['content']
+            if Document(content).images:raise ImageHold('신규 본문에 예상하지 않은 이미지: 자동 교체 중지')
+            choices={};edits={};seen=set()
+            self.cache.mkdir(parents=True,exist_ok=True)
+            sections=content.lower().find('<h2',content.lower().find('<h2')+1)
+            if sections<0:raise ImageHold('새 본문 H2 구성 확인 필요')
+            blocks=[]
+            for slot,candidate in enumerate(candidates,1):
+                c=dict(candidate)
+                if c.get('file') and c.get('info'):
+                    data=Path(c['file']).read_bytes();info=inspect_bytes(data)
+                    if info['byte_hash']!=c['info']['byte_hash']:raise ImageHold('생성 이미지 파일 변경')
+                    cached=self.cache/(info['byte_hash']+'.image');cached.write_bytes(data);c['file']=str(cached)
+                    if info['pixel_hash'] in seen:c.update(result='HOLD',reason='두 이미지의 실제 픽셀이 같습니다. 다른 장면으로 재생성하세요.')
+                    seen.add(info['pixel_hash'])
+                # A rejected image remains visible when pixels exist; it cannot be selected.
+                url=f'r3-local:replacement/{pid}/{slot}'
+                import html
+                block='<figure><img src="'+url+'" alt="'+html.escape(c.get('alt',''),quote=True)+'"><figcaption>그림 '+str(slot)+'. '+html.escape(c.get('caption',''))+'</figcaption></figure>'
+                blocks.append(block);edits[str(slot)]=c
+                if c.get('result')=='PASS':choices[str(slot)]={'candidate':c,'expected_url':url,'mode':'replace'}
+            if len(blocks)==2:content=content[:sections]+blocks[0]+content[sections:]+blocks[1]
+            for key,c in edits.items():c['edit_mode']='replace';c['target']={'slot':int(key),'url':f'r3-local:replacement/{pid}/{key}','article_hash':digest(content)}
+            p.update(proposed_content=content,image_choices=choices,image_edit_candidates=edits,replacement_preview_ready=True)
+            p['reason']='전체 교체 본문·이미지 후보 준비 · 이미지 확인 후 수정안 최종 검증을 누르세요.' if len(choices)==2 else '전체 교체 본문 보관 · 미통과 이미지 재생성 후 최종 검증 필요'
+            self.images.baseline(p)
+            return self.images.save(pid,p)
+        except Cancelled:
+            p['reason']='사용자 중단 · 전체 교체 작업 보관';self.images.save(pid,p);raise
+        except Exception as exc:
+            p['reason']=str(exc)
+            if getattr(exc,'diagnostic',None):p['error_diagnostic']=exc.diagnostic
+            return self.images.save(pid,p)

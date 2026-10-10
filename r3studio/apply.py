@@ -37,7 +37,7 @@ class Apply:
         result=journal.get('result') or {}
         if journal.get('status')!='DONE' or journal.get('action')!='apply_update' or result.get('blogId')!=self.adapter.blog_id or str(result.get('postId'))!=row['post_id'] or not result.get('backupFileId') or result.get('verified') is not True:raise ValueError('서버 수정 결과 미확정: 재적용하지 않습니다.')
         after=self.adapter.get_post(row['post_id']);desired=dict(plan['before'],**plan['proposal'])
-        if post_hash(after)!=post_hash(desired) or after.get('url')!=plan['expected_url'] or result.get('afterHash')!=post_hash(after):raise ValueError('현재 글이 검증된 수정 결과와 다릅니다.')
+        if post_hash(after)!=post_hash(desired) or after.get('url')!=plan['expected_url'] or after.get('published')!=plan['before'].get('published') or result.get('afterHash')!=post_hash(after):raise ValueError('현재 글이 검증된 수정 결과와 다릅니다.')
         unreadable=0
         with self.store.db:
             self.store.db.execute('UPDATE apply_history SET actual_hash=?,status=?,backup_ref=? WHERE id=?',(post_hash(after),'VERIFIED',result['backupFileId'],audit_id))
@@ -68,6 +68,7 @@ class Apply:
         current=self.adapter.get_post(plan['post_id']);guard_apply(plan['expected_hash'],current)
         if current.get('updated')!=plan['expected_updated']:raise ValueError('LIVE 수정 시각 변경: 적용 중지')
         if current.get('url','')!=plan['expected_url']:raise ValueError('LIVE 글 주소 변경: 적용 중지 · 최신 글 재조회 필요')
+        if current.get('published')!=plan['before'].get('published'):raise ValueError('예약·발행 시각 변경: 적용 중지')
         db=self.store.db
         with db:
             audit=db.execute('INSERT INTO apply_history(blog_id,post_id,created_at,expected_hash,actual_hash,status,backup_ref,details) VALUES(?,?,?,?,?,?,?,?)',(plan['blog_id'],plan['post_id'],now(),plan['expected_hash'],post_hash(current),'SENDING','',json.dumps(plan,ensure_ascii=False))).lastrowid
@@ -75,7 +76,7 @@ class Apply:
             reply=self.adapter.apply_update(plan)
             after=self.adapter.get_post(plan['post_id'])
             desired=dict(current,**plan['proposal'])
-            if post_hash(after)!=post_hash(desired) or after.get('url')!=plan['expected_url']:
+            if post_hash(after)!=post_hash(desired) or after.get('url')!=plan['expected_url'] or after.get('published')!=current.get('published'):
                 raise ValueError('저장 결과 불일치: 자동 재시도 없이 확인 필요')
             status='VERIFIED'
         except Exception:

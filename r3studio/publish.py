@@ -53,6 +53,7 @@ def prepare(generation,job_id,mode='DRAFT',schedule=None):
     try:job=generation.load_job(job_id)
     except (ValueError,TypeError):raise PublishHold('생성 작업 기록 확인 필요: 저장/발행 중지') from None
     p=job['payload'];final=p.get('final',{})
+    if p.get('replacement_target') is not None:raise PublishHold('기존 글 전체 교체 작업입니다. 새 게시글로 저장하지 말고 수정안 비교에서 적용하세요.')
     if not isinstance(final,dict):raise PublishHold('최종 검사 기록 형식 오류: 재검사 필요')
     if job['status']!='PASS' or final.get('grade')!='PASS':raise PublishHold('최종 PASS 글만 저장/발행 가능합니다.')
     if (any(not isinstance(p.get(k),str) or not p[k].strip() for k in ('title','composed_content','search_description'))

@@ -134,6 +134,11 @@ def smoke_test():
             if calls!=[('repair_alt',{'proposal_id':0,'slot':2})] or not dialog.winfo_exists():raise RuntimeError('이미지 작업 시작 시 비교창 보존 실패')
             refreshed=app.show_repair({'status':'HOLD','before':{'content':html2},'proposed_content':html2,'proposal_id':0,'image_review':{'items':reviews2}})
             if refreshed is not dialog or refreshed.image_editor is not editor or editor.state()=='withdrawn' or editor.image_slot.get()!=2:raise RuntimeError('작업 결과 동일 창 갱신 실패')
+            calls.clear()
+            from unittest.mock import patch
+            with patch('r3studio.app.simpledialog.askstring',return_value='청소기 안전 점검 새 주제'):
+                find_button(dialog,'본문·이미지 전체 새로 만들기').invoke()
+            if calls!=[('replace_all',{'proposal_id':0,'topic':'청소기 안전 점검 새 주제'})] or not dialog.winfo_exists():raise RuntimeError('전체 교체 버튼·원본 비교창 유지 실패')
             editor.destroy();dialog.destroy()
             settings=Settings(Path(folder)/'smoke-settings.json')
             settings.save({'R3_BRIDGE_SECRET':'local-smoke-test-only','R3_START_MODE':'DEMO'})
