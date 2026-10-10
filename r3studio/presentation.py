@@ -118,7 +118,7 @@ def inspection_text(row):
     if d.get('error_diagnostic'):
         error=d['error_diagnostic'];lines.append('검사 실패 원인: '+error.get('summary','확인 필요')+' / '+error.get('action','작업 기록 확인'))
         lines.extend(diagnostic_lines(error))
-    if not d.get('verified'):lines.append('\n다음: 연결 오류가 있으면 먼저 해결 → 선택 글 심층 검사 → 수정안 만들기 → 변경 내용 검토')
+    if not d.get('verified'):lines.append('\n다음: 실패 원인·미검증 문장 확인 → 근거와 표현을 보완한 수정안 만들기 → 변경 내용 검토 → 최종 재검증')
     return '\n'.join(lines)
 
 

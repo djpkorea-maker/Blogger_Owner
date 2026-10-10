@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev63 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev64 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -95,10 +95,10 @@ class App:
         self.table.config(yscrollcommand=scroll.set)
         self.table.pack(side='left',fill='both',expand=True); self.table.bind('<<TreeviewSelect>>',self.detail)
         detail_frame=ttk.Frame(self.inspect_panes);self.inspect_panes.add(detail_frame,weight=2)
-        ttk.Label(detail_frame,text='경계선을 마우스로 끌면 목록·상세 창 크기를 조절할 수 있습니다.').pack(anchor='w')
         self.notes=ScrolledText(detail_frame,height=12,wrap='word'); self.notes.pack(fill='both',expand=True,pady=8)
+        ttk.Label(self.inspect,text='단계 진행 표시 · 단계별 처리량과 AI 대기는 아래 기록에서 확인합니다.').pack(anchor='w')
         progress_frame=ttk.Frame(self.inspect);progress_frame.pack(fill='x',pady=4)
-        self.progress_bar=ttk.Progressbar(progress_frame,mode='indeterminate');self.progress_bar.pack(side='left',fill='x',expand=True)
+        self.progress_bar=ttk.Progressbar(progress_frame,mode='determinate',maximum=9,value=0);self.progress_bar.pack(side='left',fill='x',expand=True)
         self.elapsed_text=tk.StringVar(value='대기 중');ttk.Label(progress_frame,textvariable=self.elapsed_text).pack(side='right',padx=10)
         self.inspection_log=ScrolledText(self.inspect,height=4,wrap='word');self.inspection_log.pack(fill='x')
         self.task_started=None;self.progress_mode=None
@@ -111,19 +111,22 @@ class App:
         self.status_text.set(text)
         if hasattr(self,'progress_bar') and not self.busy:
             self.progress_bar.stop();self.progress_mode=None
+            if self.task_started is not None:self.task_elapsed=int(time.monotonic()-self.task_started)
     def refresh_elapsed(self):
         if self.busy and self.task_started is not None:
             seconds=int(time.monotonic()-self.task_started)
             self.elapsed_text.set(f'경과 {seconds//60}분 {seconds%60}초')
-        elif self.task_started is not None:self.elapsed_text.set('작업 종료')
+        elif self.task_started is not None:
+            seconds=getattr(self,'task_elapsed',0)
+            self.elapsed_text.set(f'종료 · {seconds//60}분 {seconds%60}초')
         self.root.after(500,self.refresh_elapsed)
     def update_progress(self,text):
         from .progress import progress_state
         state=progress_state(text)
-        if self.progress_mode!=state['mode']:
-            self.progress_bar.stop();self.progress_bar.config(mode=state['mode']);self.progress_mode=state['mode']
-            if state['mode']=='indeterminate':self.progress_bar.start(12)
-        if state['mode']=='determinate':self.progress_bar.config(maximum=state['total'],value=state['current'])
+        from .progress import StageProgress
+        if not hasattr(self,'stage_progress'):self.stage_progress=StageProgress()
+        position=self.stage_progress.update(text)
+        self.progress_bar.config(mode='determinate',maximum=9,value=position)
         self.inspection_log.insert('end',text+' · '+state['label']+'\n');self.inspection_log.see('end')
     def sync_posts(self,store,adapter,blog_id,selected_post=None):
         def progress(stage,index,total):
@@ -140,7 +143,11 @@ class App:
     def new_task(self):
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
-        self.task_started=time.monotonic()
+        self.task_started=time.monotonic();self.task_elapsed=0
+        from .progress import StageProgress
+        self.stage_progress=StageProgress()
+        self.progress_bar.stop();self.progress_bar.config(mode='determinate',maximum=9,value=0)
+        self.inspection_log.delete('1.0','end')
     def start_repair(self):
         if self.busy:return
         selected=self.table.selection()
@@ -499,6 +506,8 @@ class App:
                     continue
                 if event[0]=='progress':
                     self.set_status(text=event[1]);self.update_progress(event[1]); self.generation_notes.insert('end',event[1]+'\n'); self.generation_notes.see('end'); continue
+                if event[0] in ('google_done','publication_ready','repair_ready','ai_done','done'):
+                    self.progress_bar.config(value=9)
                 if event[0]=='google_done':
                     self.busy=False;self.button.config(state='normal');self.google_notes.delete('1.0','end')
                     for r in event[1]:

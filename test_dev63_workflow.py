@@ -80,7 +80,7 @@ class Tests(unittest.TestCase):
   with self.assertRaises(LinkHold):check_links(content,own,[peer],pack(),lambda u:{'status':200,'url':'https://unknown.example' if 'relay' in u else u})
  def test_waiting_progress_has_no_fabricated_percentage(self):
   state=progress_state('근거 조사 · AI 응답 대기 중')
-  self.assertEqual(state['mode'],'indeterminate');self.assertTrue(state['waiting']);self.assertIn('완료율 확인 불가',state['label'])
+  self.assertEqual(state['mode'],'determinate');self.assertTrue(state['waiting']);self.assertIn('완료율 확인 불가',state['label'])
   self.assertEqual(progress_state('Blogger 조회 5/10')['current'],5)
  def test_auto_sync_is_opt_in(self):
   self.assertFalse(auto_start_enabled({}));self.assertFalse(auto_start_enabled({'R3_AUTO_SYNC':'0'}));self.assertTrue(auto_start_enabled({'R3_AUTO_SYNC':'1'}))

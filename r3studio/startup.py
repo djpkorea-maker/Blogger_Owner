@@ -79,7 +79,7 @@ def smoke_test():
             app.inspect_panes.sashpos(0,target)
             if app.inspect_panes.sashpos(0)!=target:raise RuntimeError(f'목록·상세 경계선 조절 실패: height={app.inspect_panes.winfo_height()}, requested={target}, actual={app.inspect_panes.sashpos(0)}')
             app.update_progress('근거 조사 · AI 응답 대기 중')
-            if str(app.progress_bar.cget('mode'))!='indeterminate':raise RuntimeError('AI 대기 진행 표시 실패')
+            if str(app.progress_bar.cget('mode'))!='determinate':raise RuntimeError('AI 대기 진행 표시 실패')
             if app.busy:raise RuntimeError('기본 자동 조회 비활성화 실패')
             settings=Settings(Path(folder)/'smoke-settings.json')
             settings.save({'R3_BRIDGE_SECRET':'local-smoke-test-only','R3_START_MODE':'DEMO'})

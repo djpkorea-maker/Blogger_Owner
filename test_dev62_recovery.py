@@ -24,6 +24,7 @@ class ResearchAI:
   return {'citations':[] if self.mode=='empty' else [{'url':s['url']} for s in pack()['sources']]}
  def object(self,prompt):
   self.formats+=1;self.prompts.append(prompt);p=pack()
+  for f in p['facts']:f['article_excerpt']='電波の減衰 条件に注意'
   if self.mode=='mismatch' or self.mode=='repair' and self.formats==1:p['sources'][0]['url']='https://wrong.example/manual?token=secret'
   if self.mode=='fragment':p['sources'][0]['url']+='#section'
   if self.mode=='short':

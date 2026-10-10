@@ -41,7 +41,7 @@ def blocks_index(value,header=False):
         if applicable and set(part.split()) & {'noindex','none'}:return True
     return False
 
-def public_fetch(url):
+def public_fetch(url,raw=False):
     p=urlparse(url)
     if p.scheme not in ('http','https') or not p.hostname or p.username or p.password:raise ValueError('잘못된 공개 URL')
     chain=[]
@@ -53,12 +53,13 @@ def public_fetch(url):
     req=urllib.request.Request(url,headers={'User-Agent':'R3-Blogger-Status/0.4'})
     try:
         with urllib.request.build_opener(Redirect()).open(req,timeout=20) as res:
-            body=res.read(2*1024*1024+1)
-            if len(body)>2*1024*1024:raise ValueError('응답 본문 크기 초과')
+            limit=(8 if raw else 2)*1024*1024
+            body=res.read(limit+1)
+            if len(body)>limit:raise ValueError('응답 본문 크기 초과')
             charset=res.headers.get_content_charset() or 'utf-8'
             try:text=body.decode(charset,errors='replace')
             except LookupError:text=body.decode('utf-8',errors='replace')
-            return {'status':res.status,'url':res.url,'headers':dict(res.headers),'body':text,'redirects':chain}
+            return {'status':res.status,'url':res.url,'headers':dict(res.headers),'body':text,**({'body_bytes':body} if raw else {}),'redirects':chain}
     except urllib.error.HTTPError as exc:
         return {'status':exc.code,'url':exc.url,'headers':dict(exc.headers),'body':'','redirects':chain}
 
