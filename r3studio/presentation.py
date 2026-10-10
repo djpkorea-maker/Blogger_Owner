@@ -130,6 +130,12 @@ def inspection_text(row):
 def diagnostic_lines(detail):
     lines=[]
     if detail.get('missing_criteria'):lines.append('부족한 검사 기준: '+detail['missing_criteria'])
+    ledger=detail.get('ledger',{})
+    if ledger:
+        lines.append('근거 장부 상태: '+('AI 응답 형식·분류 보완 필요' if ledger.get('state')=='FORMAT' else '근거 연결·핵심 사실 분류 확인 필요'))
+        if 'linked_facts' in ledger:lines.append(f'AI 장부의 근거 연결 사실 {ledger["linked_facts"]}개 / 핵심 분류 {ledger["core_facts"]}개 · 원문 검증 통과와 별도')
+        lines.extend('• '+issue for issue in ledger.get('issues',[]))
+        lines.extend('장부 사실: '+f['text']+' / 핵심 분류: '+str(f.get('core'))+' / 유형: '+str(f.get('kind')) for f in ledger.get('facts',[]))
     for claim in detail.get('unverified_claims',[]):
         lines.append('근거 미확보 주장: '+claim['text']+' / '+claim['reason'])
     if detail.get('verification_targets') and not detail.get('unverified_claims'):
@@ -144,5 +150,5 @@ def diagnostic_lines(detail):
     for attempt in detail.get('search_attempts',[]):
         lines.append('검색 복구 기록: '+attempt['reason']+(' / '+str(attempt['elapsed_seconds'])+'초' if attempt.get('elapsed_seconds') is not None else ''))
     for attempt in detail.get('attempts',[]):
-        lines.append('근거 조사 '+str(attempt['attempt'])+'차: '+attempt['reason'])
+        lines.append('근거 조사 '+str(attempt['attempt'])+'차: '+attempt['reason']+(' / '+attempt['recovery'] if attempt.get('recovery') else ''))
     return lines

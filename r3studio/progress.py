@@ -13,3 +13,15 @@ class StageProgress:
             if any(word in text for word in words):
                 self.position=max(self.position,i);break
         return self.position
+
+def terminal_summary(event):
+    """Completion is different from validation success; HOLD stays incomplete."""
+    kind=event[0];result=event[1] if len(event)>1 else None
+    if kind=='error':return '오류 종료 · '+str(result)
+    rows=result if isinstance(result,list) else [result]
+    for row in rows:
+        if isinstance(row,dict) and (row.get('status') in ('HOLD','NEEDS_RECONCILE','RUNNING') or row.get('grade') in ('HOLD','SCHEDULED_HOLD','NEEDS_DEEP') or row.get('deep',{}).get('diagnostic_only')):
+            return '보류 종료 · '+str(row.get('reason') or '검증 미완료 · 결과 확인 필요')
+    if kind=='repair_ready' and isinstance(result,dict) and result.get('mode')=='REPLACEMENT' and not result.get('replacement_preview_ready'):
+        return '보류 종료 · '+str(result.get('reason') or '새 본문 미작성')
+    return '작업 종료 · 결과 확인 가능'

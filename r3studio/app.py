@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev72 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev73 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -123,7 +123,7 @@ class App:
             self.elapsed_text.set(f'경과 {seconds//60}분 {seconds%60}초')
         elif self.task_started is not None:
             seconds=getattr(self,'task_elapsed',0)
-            self.elapsed_text.set(f'종료 · {seconds//60}분 {seconds%60}초')
+            self.elapsed_text.set(f'{getattr(self,"task_outcome",None) or "종료"} · {seconds//60}분 {seconds%60}초')
         self.root.after(500,self.refresh_elapsed)
     def update_progress(self,text):
         from .progress import progress_state
@@ -132,7 +132,21 @@ class App:
         if not hasattr(self,'stage_progress'):self.stage_progress=StageProgress()
         position=self.stage_progress.update(text)
         self.progress_bar.config(mode='determinate',maximum=9,value=position)
+        # A waiting line is a live indicator, not a permanent claim of activity.
+        if getattr(self,'waiting_line',None):
+            self.inspection_log.delete(self.waiting_line,self.waiting_line+' lineend+1c');self.waiting_line=None
+        if state['waiting']:self.waiting_line=self.inspection_log.index('end-1c')
         self.inspection_log.insert('end',text+' · '+state['label']+'\n');self.inspection_log.see('end')
+    def finish_progress(self,event):
+        from .progress import terminal_summary
+        summary=terminal_summary(event)
+        self.busy=False
+        if self.task_started is not None:self.task_elapsed=int(time.monotonic()-self.task_started)
+        if getattr(self,'waiting_line',None):
+            self.inspection_log.delete(self.waiting_line,self.waiting_line+' lineend+1c');self.waiting_line=None
+        self.inspection_log.insert('end',summary+' · 현재 실행 중인 작업 없음\n');self.inspection_log.see('end')
+        self.elapsed_text.set(f'{summary.split(" · ")[0]} · {self.task_elapsed//60}분 {self.task_elapsed%60}초')
+        self.task_outcome=summary.split(' · ')[0]
     def sync_posts(self,store,adapter,blog_id,selected_post=None,force=False):
         def progress(stage,index,total):
             text=f'{stage} {index}/{total}' if total else f'{stage} · {index}개 확인'
@@ -154,6 +168,7 @@ class App:
         self.stage_progress=StageProgress()
         self.progress_bar.stop();self.progress_bar.config(mode='determinate',maximum=9,value=0)
         self.inspection_log.delete('1.0','end')
+        self.waiting_line=None;self.task_outcome=None
     def start_repair(self):
         if self.busy:return
         selected=self.table.selection()
@@ -225,14 +240,18 @@ class App:
         text.config(state='disabled')
         controls=ttk.Frame(dialog);controls.pack(fill='x',padx=15,pady=12)
         if view['can_resume']:
-            ttk.Button(controls,text='같은 작업 이어서 진행',command=lambda:self.start_ai('replace_resume',{'proposal_id':pid}) if not self.busy else None).pack(side='left')
+            def resume():
+                if self.busy:return
+                dialog.withdraw();self.start_ai('replace_resume',{'proposal_id':pid})
+            ttk.Button(controls,text='같은 작업 이어서 진행',command=resume).pack(side='left')
         def change_title():
             if self.busy:return
             title=simpledialog.askstring('전체 교체 제목 확인','새로 작성할 제목을 입력하세요. 같은 제목이면 저장된 교체 작업을 이어갑니다.',initialvalue=view['topic'],parent=dialog)
-            if title and title.strip():self.start_ai('replace_all',{'proposal_id':pid,'topic':title.strip()})
+            if title and title.strip():
+                dialog.withdraw();self.start_ai('replace_all',{'proposal_id':pid,'topic':title.strip()})
         ttk.Button(controls,text='제목 확인·변경하여 진행',command=change_title).pack(side='left',padx=8)
         ttk.Button(controls,text='닫기',command=dialog.destroy).pack(side='right')
-        return dialog
+        dialog.deiconify();return dialog
     def show_repair(self,result):
         if result.get('mode')=='REPLACEMENT':
             from .replacement import replacement_view
@@ -714,7 +733,8 @@ class App:
                     continue
                 if event[0]=='progress':
                     self.set_status(text=event[1]);self.update_progress(event[1]); self.generation_notes.insert('end',event[1]+'\n'); self.generation_notes.see('end'); continue
-                if event[0] in ('google_done','publication_ready','ai_done','done') or (event[0]=='repair_ready' and (event[1].get('mode')!='REPLACEMENT' or event[1].get('replacement_preview_ready'))):
+                self.finish_progress(event)
+                if self.task_outcome=='작업 종료' and (event[0] in ('google_done','publication_ready','ai_done','done') or (event[0]=='repair_ready' and (event[1].get('mode')!='REPLACEMENT' or event[1].get('replacement_preview_ready')))):
                     self.progress_bar.config(value=9)
                 if event[0]=='google_done':
                     self.busy=False;self.button.config(state='normal');self.google_notes.delete('1.0','end')

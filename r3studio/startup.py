@@ -71,7 +71,7 @@ def smoke_test():
             os.environ['LOCALAPPDATA']=folder
             root=tk.Tk();root.withdraw()
             app=App(root)
-            if 'Dev72 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
+            if 'Dev73 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
             root.update_idletasks() # No scheduled startup/network callbacks.
             if len(app.tabs.tabs())!=3:raise RuntimeError('세 메뉴 화면 구성 실패')
             if len(app.inspect_panes.panes())!=2:raise RuntimeError('목록·상세 조절 창 구성 실패')
@@ -84,6 +84,14 @@ def smoke_test():
             position=float(app.progress_bar.cget('value'));app.set_status('오류 정지 표시 시험')
             if float(app.progress_bar.cget('value'))!=position:raise RuntimeError('정지 후 진행 위치 보존 실패')
             if app.busy:raise RuntimeError('기본 자동 조회 비활성화 실패')
+            app.new_task();app.busy=True;app.update_progress('근거 장부 작성 · AI 응답 대기 중')
+            app.finish_progress(('repair_ready',{'status':'HOLD','reason':'핵심 근거 보완 필요'}))
+            if '응답 대기' in app.inspection_log.get('1.0','end'):raise RuntimeError('종료 후 AI 대기 표시 제거 실패')
+            if app.busy or not app.elapsed_text.get().startswith('보류 종료'):raise RuntimeError('보류 종료 표시 실패')
+            app.refresh_elapsed()
+            if not app.elapsed_text.get().startswith('보류 종료'):raise RuntimeError('종료 상태 유지 실패')
+            app.new_task()
+            if app.inspection_log.get('1.0','end').strip() or app.waiting_line is not None:raise RuntimeError('새 작업 진행 표시 초기화 실패')
             # Exercise the packaged ImageTk path with local pixels, no network.
             import io,time
             from PIL import Image
@@ -153,6 +161,8 @@ def smoke_test():
             if '새 제목: 기존 모터 원리' in content or hasattr(held,'preview_widgets'):raise RuntimeError('빈 수정안 비교 표시 차단 실패')
             calls.clear();find_button(held,'같은 작업 이어서 진행').invoke()
             if calls!=[('replace_resume',{'proposal_id':71})]:raise RuntimeError('같은 교체 작업 재개 실패')
+            if held.state()!='withdrawn':raise RuntimeError('재시도 중 이전 보류창 숨김 실패')
+            if app.show_repair(result) is not held or held.state()=='withdrawn':raise RuntimeError('재시도 결과 보류창 갱신 실패')
             result.update(proposed_title=result['replacement_topic'],proposed_content='<h2>안전 점검</h2><p>전원을 끄고 확인합니다.</p>')
             compared=app.show_repair(result);root.update_idletasks()
             if held.winfo_exists() or not compared.preview_widgets or '전원을 끄고 확인합니다.' not in compared.preview_widgets[1].get('1.0','end'):raise RuntimeError('부분 본문 비교·보류창 종료 실패')
