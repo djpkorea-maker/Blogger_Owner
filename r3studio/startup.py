@@ -87,7 +87,7 @@ def smoke_test():
             root.destroy();root=None
         return 0
     except Exception as error:
-        if sys.stderr is not None:print('Smoke test failed: '+type(error).__name__,file=sys.stderr)
+        if sys.stderr is not None:print('Smoke test failed: '+type(error).__name__+': '+str(error),file=sys.stderr)
         return 1
     finally:
         if root is not None:

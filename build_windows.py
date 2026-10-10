@@ -56,6 +56,7 @@ def main():
     # No network or credentials needed for these unit tests.
     subprocess.run([sys.executable,'-m','unittest','discover'],cwd=ROOT,check=True)
     subprocess.run(['node','test_bridge_hash.js'],cwd=ROOT,check=True)
+    subprocess.run([sys.executable,str(ROOT/'diagnose.py'),'--smoke-test'],cwd=ROOT,check=True,timeout=60)
     for command in build_commands():subprocess.run(command,cwd=ROOT,check=True)
     smoke_results={}
     for name in ('R3_Blogger_Studio','R3_Blogger_Diagnostics'):
