@@ -2,7 +2,7 @@ name: R3 Windows development build
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, dev74-research-recovery]
     paths:
       - '**.py'
       - '**.pyw'
