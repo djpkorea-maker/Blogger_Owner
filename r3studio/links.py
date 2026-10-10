@@ -54,12 +54,12 @@ def check_links(content,base_url,live_posts,evidence,fetch=public_fetch):
         if parsed.scheme not in ('http','https') or not parsed.hostname:raise LinkHold('검증 불가 링크 방식')
         kind='internal' if parsed.hostname==own_host else 'external'
         if kind=='internal' and url not in live:raise LinkHold('공개 LIVE 목록에 없는 내부링크')
-        if kind=='external' and url not in sources:raise LinkHold('근거 장부 밖의 외부링크')
         response=fetch(url)
         if not 200<=response['status']<300:raise LinkHold('링크 HTTP 오류')
         final=normalized(response['url'])
         if kind=='internal' and final not in live:raise LinkHold('내부링크 리다이렉트 목적지가 LIVE 글이 아님')
-        if kind=='external' and urlparse(final).hostname!=parsed.hostname:raise LinkHold('외부 근거 도메인 변경: 확인 필요')
+        if kind=='external' and url not in sources and final not in sources:raise LinkHold('근거 장부 밖의 외부링크 목적지')
+        if kind=='external' and urlparse(final).hostname!=parsed.hostname and final not in sources:raise LinkHold('외부 근거 도메인 변경: 확인 필요')
         results.append({'url':url,'kind':kind,'status':response['status'],'final_url':final})
         internal+=kind=='internal';external+=kind=='external'
     if not internal or not external:raise LinkHold('내부링크와 외부 근거 링크가 모두 필요합니다.')

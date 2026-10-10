@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk,messagebox,filedialog,simpledialog
 from tkinter.scrolledtext import ScrolledText
@@ -21,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev62 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev63 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -85,18 +86,45 @@ class App:
         ttk.Button(controls,text='수정 백업 복원',command=self.start_rollback).pack(side='left',padx=5)
         ttk.Button(controls,text='선택 글 심층 검사',command=self.start_deep).pack(side='right')
         self.status=ttk.Label(self.inspect,textvariable=self.status_text,wraplength=1000); self.status.pack(anchor='w',pady=10)
-        table_frame=ttk.Frame(self.inspect);table_frame.pack(fill='both',expand=True)
+        self.inspect_panes=ttk.Panedwindow(self.inspect,orient='vertical');self.inspect_panes.pack(fill='both',expand=True)
+        table_frame=ttk.Frame(self.inspect_panes);self.inspect_panes.add(table_frame,weight=3)
         self.table=ttk.Treeview(table_frame,columns=('state','grade','title','updated'),show='headings')
         for name,label,width in [('state','상태',110),('grade','검사 결과',220),('title','제목',430),('updated','Blogger 수정 시각',220)]:
             self.table.heading(name,text=label); self.table.column(name,width=width)
         scroll=ttk.Scrollbar(table_frame,orient='vertical',command=self.table.yview);scroll.pack(side='right',fill='y')
         self.table.config(yscrollcommand=scroll.set)
         self.table.pack(side='left',fill='both',expand=True); self.table.bind('<<TreeviewSelect>>',self.detail)
-        self.notes=ScrolledText(self.inspect,height=9,wrap='word'); self.notes.pack(fill='x',pady=8)
+        detail_frame=ttk.Frame(self.inspect_panes);self.inspect_panes.add(detail_frame,weight=2)
+        ttk.Label(detail_frame,text='경계선을 마우스로 끌면 목록·상세 창 크기를 조절할 수 있습니다.').pack(anchor='w')
+        self.notes=ScrolledText(detail_frame,height=12,wrap='word'); self.notes.pack(fill='both',expand=True,pady=8)
+        progress_frame=ttk.Frame(self.inspect);progress_frame.pack(fill='x',pady=4)
+        self.progress_bar=ttk.Progressbar(progress_frame,mode='indeterminate');self.progress_bar.pack(side='left',fill='x',expand=True)
+        self.elapsed_text=tk.StringVar(value='대기 중');ttk.Label(progress_frame,textvariable=self.elapsed_text).pack(side='right',padx=10)
+        self.inspection_log=ScrolledText(self.inspect,height=4,wrap='word');self.inspection_log.pack(fill='x')
+        self.task_started=None;self.progress_mode=None
         self.results={};self.last_apply_id=None; root.after(100,self.poll)
-        root.after(300,self.start)
+        from .start_mode import auto_start_enabled
+        if auto_start_enabled(os.environ):root.after(300,self.start)
+        else:self.set_status('조회 대기 · LIVE 동기화 + Fast 검사를 누르면 시작합니다.')
+        root.after(500,self.refresh_elapsed)
     def set_status(self,text):
         self.status_text.set(text)
+        if hasattr(self,'progress_bar') and not self.busy:
+            self.progress_bar.stop();self.progress_mode=None
+    def refresh_elapsed(self):
+        if self.busy and self.task_started is not None:
+            seconds=int(time.monotonic()-self.task_started)
+            self.elapsed_text.set(f'경과 {seconds//60}분 {seconds%60}초')
+        elif self.task_started is not None:self.elapsed_text.set('작업 종료')
+        self.root.after(500,self.refresh_elapsed)
+    def update_progress(self,text):
+        from .progress import progress_state
+        state=progress_state(text)
+        if self.progress_mode!=state['mode']:
+            self.progress_bar.stop();self.progress_bar.config(mode=state['mode']);self.progress_mode=state['mode']
+            if state['mode']=='indeterminate':self.progress_bar.start(12)
+        if state['mode']=='determinate':self.progress_bar.config(maximum=state['total'],value=state['current'])
+        self.inspection_log.insert('end',text+' · '+state['label']+'\n');self.inspection_log.see('end')
     def sync_posts(self,store,adapter,blog_id,selected_post=None):
         def progress(stage,index,total):
             text=f'{stage} {index}/{total}' if total else f'{stage} · {index}개 확인'
@@ -112,6 +140,7 @@ class App:
     def new_task(self):
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
+        self.task_started=time.monotonic()
     def start_repair(self):
         if self.busy:return
         selected=self.table.selection()
@@ -142,8 +171,8 @@ class App:
         dialog=tk.Toplevel(self.root);dialog.title('수정안 비교 · '+result['status']);dialog.geometry('1050x700')
         from .gates import Document
         panes=ttk.Panedwindow(dialog,orient='horizontal');panes.pack(fill='both',expand=True,padx=10,pady=10)
-        original=result['before'].get('content','');proposed=result.get('plan',{}).get('proposal',{}).get('content','')
-        for label,content in [('현재 글',original),('검증된 수정안',proposed)]:
+        original=result['before'].get('content','');proposed=result.get('plan',{}).get('proposal',{}).get('content',result.get('proposed_content',''))
+        for label,content in [('현재 글',original),('수정안 · '+('검증 통과' if result['status']=='PASS' else '검증 미완료'),proposed)]:
             frame=ttk.Frame(panes);panes.add(frame,weight=1);ttk.Label(frame,text=label,font=('',13,'bold')).pack(anchor='w')
             text=ScrolledText(frame,wrap='word');text.pack(fill='both',expand=True);text.insert('end','\n'.join(Document(content).text));text.config(state='disabled')
         ttk.Label(dialog,text=result.get('reason') or '수정 이유: '+' / '.join(str(x) for x in result.get('changes',[])),wraplength=1000).pack(fill='x',padx=10,pady=8)
@@ -187,16 +216,19 @@ class App:
         mode=tk.StringVar(value='데모 조회' if self.demo.get() else '실제 Blogger 조회')
         ttk.Label(dialog,text='다음 실행 시 첫 조회').grid(row=len(fields),column=0,padx=10,pady=6)
         ttk.Combobox(dialog,textvariable=mode,values=('데모 조회','실제 Blogger 조회'),state='readonly',width=25).grid(row=len(fields),column=1,sticky='w',padx=10)
+        automatic=tk.BooleanVar(value=os.environ.get('R3_AUTO_SYNC')=='1')
+        ttk.Checkbutton(dialog,text='프로그램 시작 시 자동 조회',variable=automatic).grid(row=len(fields)+1,column=1,sticky='w',padx=10,pady=6)
         def use(save):
             values={key:entry.get().strip() for key,entry in entries.items()}
+            values['R3_AUTO_SYNC']='1' if automatic.get() else '0'
             values['R3_START_MODE']='DEMO' if mode.get()=='데모 조회' else 'LIVE'
             try:
                 if save:self.settings.save(values)
                 self.settings.activate(values);self.demo.set(values['R3_START_MODE']=='DEMO');dialog.destroy()
                 self.set_status(text='연결 설정 반영 완료. 실제 연결 조회는 아직 실행하지 않았습니다.')
             except Exception as exc:messagebox.showerror('설정',str(exc),parent=dialog)
-        ttk.Button(dialog,text='이번 실행에서만 사용',command=lambda:use(False)).grid(row=len(fields)+1,column=0,pady=12)
-        ttk.Button(dialog,text='암호화 저장 후 사용',command=lambda:use(True)).grid(row=len(fields)+1,column=1,pady=12)
+        ttk.Button(dialog,text='이번 실행에서만 사용',command=lambda:use(False)).grid(row=len(fields)+2,column=0,pady=12)
+        ttk.Button(dialog,text='암호화 저장 후 사용',command=lambda:use(True)).grid(row=len(fields)+2,column=1,pady=12)
     def start_google(self):
         if self.busy: return
         if self.demo.get():
@@ -313,7 +345,7 @@ class App:
             # Refresh Blogger before sending local content to any generation/check request.
             self.events.put(('progress','최신 Blogger 상태 동기화 중…'))
             self.cancel_token.checkpoint()
-            self.sync_posts(store,adapter,adapter.blog_id,selected_post=value if action=='deep' else None);self.cancel_token.checkpoint(); run_checks(store,adapter.blog_id,force_recheck=True)
+            self.sync_posts(store,adapter,adapter.blog_id,selected_post=value if action in ('deep','repair') else None);self.cancel_token.checkpoint(); run_checks(store,adapter.blog_id,force_recheck=True)
             if action in ('repair','apply_repair','rollback','reconcile_apply'):
                 from .recovery import Recovery,rollback_verified
                 from .bridge import WriteBridgeAdapter
@@ -395,7 +427,7 @@ class App:
                 except (GeminiError,EvidenceHold) as exc:
                     from .existing import partial_link_review,record_incomplete
                     partial=None
-                    try:partial=partial_link_review(store,adapter,value,progress)
+                    try:partial=partial_link_review(store,adapter,value,progress,ai=ai if isinstance(exc,EvidenceHold) else None,cache_dir=self.base/"image_cache")
                     except Cancelled:raise
                     except Exception:pass # Preserve the original classified research error.
                     incomplete=record_incomplete(store,adapter.blog_id,value,exc,partial)
@@ -412,7 +444,7 @@ class App:
                 from .bridge import BridgeError
                 partial=None
                 if not isinstance(exc,(BridgeError,Cancelled)):
-                    try:partial=partial_link_review(store,adapter,value,progress)
+                    try:partial=partial_link_review(store,adapter,value,progress,ai=ai if isinstance(exc,EvidenceHold) else None,cache_dir=self.base/"image_cache")
                     except Exception:pass
                 incomplete=record_incomplete(store,adapter.blog_id,value,exc,partial)
                 if incomplete:self.events.put(('inspection_incomplete',incomplete))
@@ -466,7 +498,7 @@ class App:
                         self.results[pid]['grade']=result['grade'];self.results[pid]['details']=result;self.table.set(pid,'grade',result['grade']);self.detail()
                     continue
                 if event[0]=='progress':
-                    self.set_status(text=event[1]); self.generation_notes.insert('end',event[1]+'\n'); self.generation_notes.see('end'); continue
+                    self.set_status(text=event[1]);self.update_progress(event[1]); self.generation_notes.insert('end',event[1]+'\n'); self.generation_notes.see('end'); continue
                 if event[0]=='google_done':
                     self.busy=False;self.button.config(state='normal');self.google_notes.delete('1.0','end')
                     for r in event[1]:

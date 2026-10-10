@@ -28,7 +28,7 @@ def record_incomplete(store,blog_id,pid,error=None,partial=None):
         store.db.execute('UPDATE posts SET grade=? WHERE blog_id=? AND post_id=?',(grade,blog_id,pid))
     return details
 
-def partial_link_review(store,adapter,pid,progress=lambda *args:None):
+def partial_link_review(store,adapter,pid,progress=lambda *args:None,ai=None,cache_dir=None):
     """Read-only reachability is useful even when the evidence/AI stage fails.
 
     It never implies factual support or overall PASS, and checks freshness twice.
@@ -40,10 +40,17 @@ def partial_link_review(store,adapter,pid,progress=lambda *args:None):
         raise ValueError('부분 검사 중 글 변경: 다시 동기화하세요.')
     progress('부분 검사 · 링크 공개 접근',0,1)
     access=inspect_link_access(before['content'],before.get('url',''),public_fetch,getattr(adapter,'checkpoint',lambda:None))
+    image_review=None
+    if ai is not None:
+        from .images import inspect_existing_images
+        image_review=inspect_existing_images(store,ai,before['title'],before['content'],cache_dir,adapter.blog_id,pid,progress=progress)
     after=adapter.get_post(pid)
     if post_hash(after)!=post_hash(before) or after['updated']!=before['updated'] or after.get('url','')!=before.get('url',''):
         raise ValueError('부분 검사 중 LIVE 변경: 결과 저장 중지')
-    return {'link_access':access,'check_states':{'links':'공개 접근 검사 완료 · 근거 적합성은 미검증','images':'미검사 · 근거 조사 실패 후 AI 이미지 호출을 추가하지 않았습니다.'}}
+    result={'link_access':access,'check_states':{'links':'공개 접근 검사 완료 · 근거 적합성은 미검증','images':'미검사 · AI 연결 오류 후 이미지 호출을 추가하지 않았습니다.'}}
+    if image_review is not None:
+        result['image_review']=image_review;result['check_states']['images']='이미지별 문제·수정 제안 기록 · 최종 검증과 별도'
+    return result
 
 def inspect_existing(store,adapter,ai,pid,evidence,cache_dir,progress=lambda *args:None):
     before=adapter.get_post(pid)
@@ -61,6 +68,10 @@ def inspect_existing(store,adapter,ai,pid,evidence,cache_dir,progress=lambda *ar
     post=dict(before,independent_fact_search=audit,internal_link_candidates=[{'post_id':p['post_id'],'title':p['title'],'url':p['url']} for p in peers if p.get('url')]);deep=evaluate(ai,post,evidence,fast)
     from .finalize import corpus_hash,existing_review_hash
     result={'post_id':str(pid),'corpus_hash':corpus_hash(corpus),'review_context_hash':existing_review_hash(corpus,pid),'grade':deep['grade'],'issues':deep.get('issues',[]),'fast':fast,'deep':deep,'verified':False,'check_states':{'images':'미검사 · 본문 검증 통과 후 실행','links':'미검사 · 본문·이미지 검증 통과 후 실행'}}
+    if not deep.get('text_verified'):
+        from .images import inspect_existing_images
+        result['image_review']=inspect_existing_images(store,ai,before['title'],before['content'],cache_dir,adapter.blog_id,pid,progress=progress)
+        result['check_states']['images']='이미지별 문제·수정 제안 기록 · 최종 검증과 별도'
     if deep.get('text_verified'):
         try:
             progress('공개 이미지·ALT·설명문 검사',0,1)
@@ -77,6 +88,9 @@ def inspect_existing(store,adapter,ai,pid,evidence,cache_dir,progress=lambda *ar
             stage='images' if isinstance(error,ImageHold) else 'links'
             result['check_states'][stage]='미완료 · '+str(error)
             result.update(grade='SCHEDULED_HOLD' if before['status']=='SCHEDULED' else 'B',issues=[str(error)])
+    if result['check_states']['images'].startswith('미완료'):
+        from .images import inspect_existing_images
+        result['image_review']=inspect_existing_images(store,ai,before['title'],before['content'],cache_dir,adapter.blog_id,pid,progress=progress)
     if result['check_states']['links']!='완료':
         from .links import inspect_link_access
         progress('부분 검사 · 링크 공개 접근',0,1)

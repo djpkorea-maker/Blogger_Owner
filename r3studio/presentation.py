@@ -99,6 +99,15 @@ def inspection_text(row):
     for finding in review.get('findings',[]):
         lines.extend(['\n문제 위치: '+finding['location'],'문제 내용: '+finding['excerpt'],'이유: '+finding['reason'],'수정 제안: '+finding['suggestion']])
     if review and issues and not review.get('findings'):lines.append('세부 문제 위치가 응답에 없습니다. 심층 재검사 또는 수정안 검토가 필요합니다.')
+    for item in d.get('image_review',{}).get('items',[]):
+        lines.append('\n이미지 '+str(item['index'])+' · '+item['status'])
+        if item.get('observed'):lines.append('실제 보이는 대상: '+item['observed'])
+        lines.extend('• '+issue for issue in item.get('issues',[]))
+        if item.get('replacement_needed'):lines.append('조치: 본문에 맞는 이미지 교체 필요 · 자동 교체하지 않았습니다.')
+        suggestion=item.get('suggested_text')
+        if suggestion:
+            lines.append('현재 ALT: '+item['current_alt']);lines.append('ALT 수정 제안: '+suggestion['alt']);lines.append('설명문 수정 제안: '+suggestion['caption'])
+            lines.append('이 제안은 적용 전 최종 픽셀 일치 재검증이 필요합니다.')
     access=d.get('link_access')
     if isinstance(access,dict):
         lines.append('\n링크별 공개 접근 결과 · 사실 근거 적합성과는 별도:')

@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-FIELDS={'R3_BLOG_ID','R3_BRIDGE_URL','R3_BRIDGE_SECRET','R3_GEMINI_KEY','R3_GEMINI_MODEL','R3_IMAGE_MODEL','R3_GSC_TOKEN','R3_GSC_PROPERTY','R3_START_MODE'}
+FIELDS={'R3_BLOG_ID','R3_BRIDGE_URL','R3_BRIDGE_SECRET','R3_GEMINI_KEY','R3_GEMINI_MODEL','R3_IMAGE_MODEL','R3_GSC_TOKEN','R3_GSC_PROPERTY','R3_START_MODE','R3_AUTO_SYNC'}
 SECRET_FIELDS={'R3_BRIDGE_SECRET','R3_GEMINI_KEY','R3_GSC_TOKEN'}
 
 class SettingsError(RuntimeError):pass
@@ -31,6 +31,7 @@ class Settings:
         for key,value in values.items():
             if key not in FIELDS or not isinstance(value,str):raise SettingsError('설정 형식 오류')
             value=value.strip()
+            if key=='R3_AUTO_SYNC' and value not in ('0','1'):raise SettingsError('자동 조회 설정 형식 오류')
             if key=='R3_START_MODE' and value not in ('DEMO','LIVE'):raise SettingsError('시작 모드는 데모 또는 실제 조회로 선택하세요.')
             stored[key]={'encrypted':base64.b64encode(self.protect(value.encode())).decode()} if key in SECRET_FIELDS and value else value
         self.path.parent.mkdir(parents=True,exist_ok=True)

@@ -54,3 +54,33 @@ def image_captions(content):
             raise ImageHold('이미지 설명문 내용 확인 필요')
         used.add(id(caption));items.append(' '.join(caption.text().split()))
     return items
+
+def replace_image_text(content,suggestions):
+    """Apply pixel-derived text by image order to an explicit caption container."""
+    import html
+    root=Tree(content).root
+    images=[n for n in root.nodes() if n.tag=='img']
+    for item in suggestions:
+        image=images[item['index']-1]
+        if image.attrs.get('src','')!=item['url']:raise ImageHold('ALT 수정 대상 이미지 변경')
+        image.attrs['alt']=item['suggested_text']['alt']
+        if 'title' in image.attrs:image.attrs['title']=item['suggested_text']['alt']
+        container=image.parent
+        while container.parent and container.tag not in ('figure','div'):container=container.parent
+        caption=None
+        if container.tag=='figure' and sum(n.tag=='img' for n in container.nodes())==1:
+            found=[n for n in container.nodes() if n.tag=='figcaption']
+            if len(found)==1:caption=found[0]
+        elif container.tag=='div' and 'separator' in container.attrs.get('class','').split():
+            siblings=container.parent.children;index=siblings.index(container)+1
+            while index<len(siblings) and isinstance(siblings[index],str) and not siblings[index].strip():index+=1
+            if index<len(siblings) and isinstance(siblings[index],Node) and 'abs-v23-caption' in siblings[index].attrs.get('class','').split():caption=siblings[index]
+        if caption is None:raise ImageHold('설명문 수정 위치 확인 필요: 명확한 이미지별 설명 구조가 필요합니다.')
+        caption.children=[item['suggested_text']['caption']]
+    def render(node):
+        if isinstance(node,str):return html.escape(node,quote=False)
+        inner=''.join(render(child) for child in node.children)
+        if not node.tag:return inner
+        attrs=''.join(' '+key+('="'+html.escape(str(value),quote=True)+'"' if value is not None else '') for key,value in node.attrs.items())
+        return '<'+node.tag+attrs+'>'+('' if node.tag in VOID else inner+'</'+node.tag+'>')
+    return render(root)
