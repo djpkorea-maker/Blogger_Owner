@@ -111,6 +111,10 @@ class Replacement:
                     raise ImageHold('이전 이미지 업로드 결과 미확정: 수정·복원 결과 확인 후 이어가세요. 재업로드하지 않습니다.')
                 from .text_flow import checkpoint
                 checkpoint(payload,'이전 시험판 본문·이미지 보존')
+                selected=[preserved_choices.get(str(slot),{}).get('candidate') for slot in (1,2)]
+                if all(isinstance(c,dict) and c.get('result')=='PASS' for c in selected):
+                    payload['image_candidates']=deepcopy(selected)
+                for candidate in payload.get('image_candidates',[]):candidate.pop('generation_context',None)
                 if payload.get('image_candidates'):payload['preserved_image_candidates']=deepcopy(payload['image_candidates'])
                 payload['content']=strip_auxiliary(payload['content'])
                 for key in ('deep','fast','replacement_links_ready','text_review_hash','text_review_context','text_review_checked_at'):
@@ -142,11 +146,11 @@ class Replacement:
                 payload['content']=append_verified_candidates(self.ai,payload['title'],payload['content'],peers,payload['evidence'],strict=True,record=lambda v:payload.update(reference_bindings=v))
                 payload['replacement_links_ready']=True
                 g.save(job,'전체 교체 링크 배치','HOLD',payload)
-            candidates=payload.get('image_candidates',[])
-            if len(candidates)!=2 or any(c.get('result')!='PASS' for c in candidates):
-                try:generate_candidates(g,generator,job,self.cache)
-                finally:self.capture(pid,p,g,job)
-                payload=g.load_job(job)['payload'];candidates=payload.get('image_candidates',[])
+            # Always use the common candidate path: same-context assets reuse
+            # without API calls; changed body/links force pixel and text QA.
+            try:generate_candidates(g,generator,job,self.cache)
+            finally:self.capture(pid,p,g,job)
+            payload=g.load_job(job)['payload'];candidates=payload.get('image_candidates',[])
             # Local preview placeholders are never considered public image URLs.
             content=payload['content']
             if Document(content).images:raise ImageHold('신규 본문에 예상하지 않은 이미지: 자동 교체 중지')

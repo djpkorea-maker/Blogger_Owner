@@ -56,7 +56,7 @@ class Tests(unittest.TestCase):
     def test_reference_selection_only_uses_original_backed_fact_and_actual_excerpt(self):
         p=pack();p['sources'].append({'id':'unused','url':'https://unused.example/video','grade':'A','reason':'모든 곳에 붙이면 안 되는 영상'})
         p['original_verification']['pack_hash']=digest({'sources':p['sources'],'facts':p['facts']})
-        p['original_verification']['originals']['s1']['document_title']='제조사 모델별 사용 설명서'
+        p['original_verification']['originals'][p['original_verification']['claims'][0]['source_id']]['document_title']='제조사 모델별 사용 설명서'
         body=long_body();records=[]
         result=append_verified_candidates(ChoiceAI(),TITLE,body,[{'post_id':'2','title':'관련 점검','url':'https://blog.example/peer','status':'LIVE'}],p,strict=True,record=records.append)
         self.assertIn('제조사 모델별 사용 설명서',result)
