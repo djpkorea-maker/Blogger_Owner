@@ -42,3 +42,32 @@ const urlRace={requestId:'44444444-4444-4444-4444-444444444444',postId:'1',expec
 assert.throws(()=>context.R3_WRITE_('apply_update',urlRace,'blog','https://example.com/posts'),/live_conflict_after_backup/);
 assert.equal(reads,2);assert.equal(patches,0);
 console.log('Bridge URL change during backup blocks PATCH test passed');
+
+// Dev82 recovery relies on journal-before-file and same-ID replay protection.
+let uploads=0;
+const imageId='55555555-5555-4555-8555-555555555555';
+const settings={R3_BLOG_ID:'blog',R3_BRIDGE_SECRET:'mock-secret',R3_ENABLE_WRITES:'true',R3_AUDIT_FOLDER_ID:'folder',R3_IMAGE_FOLDER_ID:'images'};
+context.PropertiesService={getScriptProperties:()=>({getProperty:key=>settings[key],setProperty:(key,value)=>{settings[key]=value;}})};
+context.Utilities.computeDigest=(algo,value)=>Array.from(crypto.createHash('sha256').update(Array.isArray(value)?Buffer.from(value):value,'utf8').digest());
+context.Utilities.base64Decode=value=>Array.from(Buffer.from(value,'base64'));
+context.Utilities.newBlob=(bytes,mime,name)=>({bytes,mime,name});
+const imageFolder={createFile:blob=>{
+  assert.equal(JSON.parse(files.get('request_'+imageId+'.json')).status,'RUNNING');
+  uploads++;return {getId:()=> 'uploaded-image',setSharing:()=>{},setTrashed:()=>{}};
+}};
+context.DriveApp={getFolderById:id=>id==='images'?imageFolder:folder,Access:{ANYONE_WITH_LINK:'public'},Permission:{VIEW:'view'}};
+context.ContentService={MimeType:{JSON:'json'},createTextOutput:text=>({setMimeType:()=>JSON.parse(text)})};
+const countBefore=files.size;
+const missing=context.R3_REQUEST_STATUS_({requestId:imageId},'blog');
+assert.equal(missing.ok,true);assert.equal(missing.status,'NOT_FOUND');assert.equal(missing.blogId,'blog');
+assert.equal(files.size,countBefore);assert.equal(uploads,0);
+const uploadRequest={secret:'mock-secret',action:'upload_image',payload:{requestId:imageId,confirm:'UPLOAD_ONE_IMAGE',base64:Buffer.from('mock-image').toString('base64'),mimeType:'image/png',fileName:'scene.png'}};
+const first=context.doPost({postData:{contents:JSON.stringify(uploadRequest)}});
+assert.equal(first.ok,true);assert.equal(uploads,1);
+const second=context.doPost({postData:{contents:JSON.stringify(uploadRequest)}});
+assert.deepEqual(second,first);assert.equal(uploads,1);assert.equal(patches,0);
+assert.equal(context.R3_REQUEST_STATUS_({requestId:imageId},'blog').status,'DONE');
+settings.R3_ENABLE_WRITES='false';
+assert.equal(context.doPost({postData:{contents:JSON.stringify(uploadRequest)}}).error,'writes_disabled');
+assert.equal(uploads,1);
+console.log('Bridge NOT_FOUND recovery, journal-before-upload and same-ID no-duplicate tests passed');

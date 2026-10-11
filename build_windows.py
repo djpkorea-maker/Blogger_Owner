@@ -38,7 +38,8 @@ def bundle(release,smoke_results=None):
         shutil.copy2(ROOT/name,release/name)
     hashes={str(p.relative_to(release)).replace('\\','/'):hashlib.sha256(p.read_bytes()).hexdigest()
             for p in release.rglob('*') if p.is_file()}
-    (release/'manifest.json').write_text(json.dumps({'status':'WINDOWS_BUILD_UNVERIFIED',
+    from r3studio import __version__
+    (release/'manifest.json').write_text(json.dumps({'status':'WINDOWS_BUILD_UNVERIFIED','app_version':__version__,
         'python':platform.python_version(),'windows_runner_smoke':smoke_results or {},'user_pc_verified':False,'account_integration_verified':False,'files':hashes},ensure_ascii=False,indent=2),encoding='utf-8')
     from verify_release import verify
     verify(release)

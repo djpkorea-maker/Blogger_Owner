@@ -27,7 +27,7 @@ def history_text(rows):
             detail=json.loads(row['details'])
         except (ValueError,TypeError,KeyError):detail=None
         if isinstance(detail,dict):
-            for key,label in [('http_status','HTTP 오류 코드'),('reason','오류 분류'),('model','사용 모델'),('summary','원인'),('action','다음 조치'),('retry_after_seconds','재시도 대기(초)'),('stage','중단 단계'),('request_type','요청 종류'),('elapsed_seconds','해당 요청 대기(초)'),('timeout_seconds','요청 대기 설정(초)'),('input_chars','요청 자료 길이(문자)'),('thinking_level','검색 사고 설정')]:
+            for key,label in [('http_status','HTTP 오류 코드'),('reason','오류 분류'),('server_code','Bridge 거절 코드'),('server_status','서버 업로드 상태'),('image_slot','이미지 번호'),('model','사용 모델'),('summary','원인'),('action','다음 조치'),('retry_after_seconds','재시도 대기(초)'),('stage','중단 단계'),('request_type','요청 종류'),('elapsed_seconds','해당 요청 대기(초)'),('timeout_seconds','요청 대기 설정(초)'),('input_chars','요청 자료 길이(문자)'),('thinking_level','검색 사고 설정')]:
                 if detail.get(key) is not None:lines.append(label+': '+str(detail[key]))
             lines.extend(diagnostic_lines(detail))
         elif row['status']=='FAILED':lines.append('이전 기록에는 상세 원인이 없습니다. 보완 버전으로 재검사해야 확인할 수 있습니다.')

@@ -10,7 +10,7 @@ from .links import check_links
 from .images import check_public_images
 from .apply import Apply
 from .captions import Tree,Node,VOID
-from .layout import figure,upload_checked
+from .layout import figure,upload_checked,recover_upload,upload_context
 from .tasks import Cancelled
 
 def render(node):
@@ -133,6 +133,7 @@ class RepairImages:
         row,p=self.load(pid);content=p.get('proposed_content','');self.baseline(p)
         title=p.get('proposed_title',p['before']['title']);base_url=p.get('site_url') or p['before'].get('url','')
         self.save(pid,p) # Revoke old PASS before any external call.
+        p.pop('error_diagnostic',None)
         try:
             if p.get('mode')=='REPLACEMENT':
                 import re
@@ -147,11 +148,21 @@ class RepairImages:
                 else:
                     receipt=choice.get('receipt')
                     if not receipt:
+                        context=upload_context(self.adapter,candidate)
+                        if choice.get('upload_context') is not None and choice['upload_context']!=context:
+                            raise ImageHold('이미지 업로드 대상·파일 기록 변경: 기존 요청을 재사용하지 않습니다.')
+                        choice['upload_context']=context
                         if choice.get('request_id'):
-                            journal=self.adapter.request_status(choice['request_id']);receipt=journal.get('result',{})
-                            if journal.get('status')!='DONE' or journal.get('action')!='upload_image' or receipt.get('blogId')!=self.adapter.blog_id or receipt.get('byte_hash')!=info['byte_hash']:raise ImageHold('이전 이미지 업로드 결과 미확정: 재업로드하지 않습니다.')
+                            def record_upload(event):
+                                choice['upload_recovery']=dict(event,image_slot=slot)
+                                p.setdefault('upload_recovery_history',[]).append(dict(event,image_slot=slot,at=now()))
+                                p['upload_recovery_history']=p['upload_recovery_history'][-20:]
+                                self.save(pid,p)
+                            self.save(pid,p)
+                            receipt=recover_upload(self.adapter,candidate,choice['request_id'],slot,self.progress,record_upload)
                         else:
                             choice['request_id']=str(uuid.uuid4());self.save(pid,p)
+                            self.progress('이미지 '+str(slot)+' 공개 업로드',0,1)
                             receipt=upload_checked(self.adapter,candidate,choice['request_id'])
                         figure(candidate,receipt,slot);choice['receipt']=receipt;self.save(pid,p)
                 content=replace_slot(content,slot,choice['expected_url'],candidate,receipt)
@@ -184,6 +195,7 @@ class RepairImages:
             self.baseline(p);plan=Apply(self.store,self.adapter).prepare(str(before['id']),title,content,before.get('labels',[]))
             if plan['expected_hash']!=p['expected_hash'] or plan['expected_updated']!=before['updated'] or plan['expected_url']!=before.get('url',''):raise ImageHold('검증 중 LIVE 변경: 적용 중지')
             p.update(plan=plan,proposal_hash=digest(plan['proposal']),corpus_hash=corpus_hash(corpus),evidence=pack,deep=deep,images=checked,links=links,reason='수정안 전체 검증 통과 · 검토 후 적용 가능')
+            p.pop('error_diagnostic',None)
             return self.save(pid,p,'PASS',invalidate=False)
         except Cancelled:raise
         except Exception as exc:

@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev81 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev82 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -586,7 +586,11 @@ class App:
                     if getattr(error,'diagnostic',None):payload['error_diagnostic']=error.diagnostic
                     result=service.save(value['proposal_id'],payload)
                     finish_error(task,error);self.events.put(('repair_ready',result));return
-                task.finish('COMPLETED');self.events.put(('repair_ready',result));return
+                if action=='repair_validate':
+                    from .tasks import finish_validation
+                    finish_validation(task,result)
+                else:task.finish('COMPLETED')
+                self.events.put(('repair_ready',result));return
             if action in ('repair','apply_repair','rollback','reconcile_apply'):
                 from .recovery import Recovery,rollback_verified
                 from .bridge import WriteBridgeAdapter
@@ -614,7 +618,7 @@ class App:
                     result=generate_candidates(generation,Generator.from_environment(),value,self.base/'generated_images')
                 elif action=='upload_images':
                     from .bridge import WriteBridgeAdapter
-                    from .layout import upload_checked
+                    from .layout import upload_checked,recover_upload,upload_context
                     import uuid
                     writer=WriteBridgeAdapter.from_environment();payload=generation.load_job(value)['payload']
                     images=payload.get('image_candidates',[])
@@ -623,10 +627,20 @@ class App:
                     for index,image in enumerate(images):
                         if index<len(receipts):continue
                         requests=payload.setdefault('upload_requests',[])
-                        if index<len(requests):raise ValueError('이 이미지의 이전 업로드 결과 확인 필요: 중복 업로드 중지')
-                        request_id=str(uuid.uuid4());requests.append({'id':request_id,'status':'SENDING','byte_hash':image['info']['byte_hash']})
-                        generation.save(value,'이미지 업로드 요청','HOLD',payload)
-                        receipt=upload_checked(writer,image,request_id);receipts.append(receipt)
+                        context=upload_context(writer,image)
+                        if index<len(requests):
+                            request=requests[index]
+                            if request.get('byte_hash')!=image['info']['byte_hash'] or request.get('upload_context',context)!=context:raise ValueError('기존 이미지 업로드 대상·파일 기록 불일치')
+                            request['upload_context']=context
+                            def record_upload(event):
+                                request['recovery']=dict(event,image_slot=index+1)
+                                generation.save(value,'이미지 업로드 결과 확인','HOLD',payload)
+                            receipt=recover_upload(writer,image,request['id'],index+1,progress,record_upload)
+                        else:
+                            request_id=str(uuid.uuid4());requests.append({'id':request_id,'status':'SENDING','byte_hash':image['info']['byte_hash'],'upload_context':context})
+                            generation.save(value,'이미지 업로드 요청','HOLD',payload)
+                            receipt=upload_checked(writer,image,request_id)
+                        receipts.append(receipt)
                         requests[index]['status']='VERIFIED'
                         payload['upload_receipts']=receipts;generation.save(value,'이미지 업로드','HOLD',payload)
                     result=generation.compose_uploaded(value,receipts)

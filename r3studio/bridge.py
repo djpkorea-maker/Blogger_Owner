@@ -11,6 +11,24 @@ class BridgeError(RuntimeError):
     def __init__(self,message,diagnostic=None):
         super().__init__(message);self.diagnostic=diagnostic
 
+BRIDGE_ACTIONS={'list_metadata':'Blogger 목록 조회','get_post':'Blogger 단건 조회','request_status':'이전 요청 결과 조회',
+    'upload_image':'이미지 공개 업로드','apply_update':'수정안 적용','rollback':'백업 복원','create_draft':'초안 저장','publish_pass':'발행·예약'}
+REJECTIONS={
+    'read_only_unknown_action':('읽기 전용 Bridge가 업로드·수정 요청을 거절했습니다.','쓰기 지원 Bridge 코드와 활성 배포 버전을 확인하세요.'),
+    'writes_disabled':('Bridge 쓰기 기능이 꺼져 있습니다.','해당 R3 프로젝트의 R3_ENABLE_WRITES 값을 확인하세요.'),
+    'configuration_missing':('Bridge의 필수 설정이 없습니다.','해당 R3 프로젝트의 블로그 ID·인증값 설정을 확인하세요.'),
+    'unauthorized':('Bridge 인증값이 일치하지 않습니다.','프로그램과 해당 R3 프로젝트의 인증값을 확인하세요. 인증값은 공유하지 마세요.'),
+    'unknown_action':('배포된 Bridge가 이 요청을 지원하지 않습니다.','쓰기 지원 Bridge의 활성 배포 버전을 확인하세요.'),
+    'bridge_busy':('Bridge에서 다른 저장 작업이 진행 중입니다.','기존 요청 결과를 확인한 뒤 같은 작업을 이어가세요.'),
+    'request_outcome_unknown_no_retry':('서버에 시작된 요청의 완료 결과가 없습니다.','기존 요청 번호를 유지하고 서버 기록을 확인하세요. 새 요청으로 다시 저장하지 마세요.'),
+    'request_payload_mismatch':('이전 요청과 업로드·저장 내용이 달라 거절됐습니다.','기존 요청·파일·수정안 기록을 보존하고 변경 여부를 확인하세요.'),
+    'request_id_required':('Bridge 요청 번호가 없거나 잘못됐습니다.','기존 작업 기록을 확인하세요.'),
+    'image_sharing_failed':('이미지 공개 공유 설정에 실패했습니다.','Drive의 공유 권한과 조직 정책을 확인하세요.'),
+    'image_mime':('이미지 파일 형식을 Bridge가 거절했습니다.','JPEG·PNG·WebP 이미지인지 확인하세요.'),
+    'image_size':('이미지가 비어 있거나 2MB 한도를 넘었습니다.','선택 이미지의 파일 크기를 확인하세요.'),
+    'live_conflict':('Blogger 글이 변경되어 적용을 중지했습니다.','최신 글과 수정안을 다시 비교하세요.'),
+    'live_conflict_after_backup':('백업 중 Blogger 글이 변경되어 적용을 중지했습니다.','최신 글과 수정안을 다시 비교하세요.')}
+
 def bridge_failure(reason,http_status=None,elapsed=None):
     summaries={'TIMEOUT':'Blogger Bridge 응답 시간 초과','NETWORK':'Blogger Bridge 네트워크 연결 실패','HTTP_ERROR':'Blogger Bridge HTTP 요청 실패','INVALID_JSON':'Blogger Bridge가 JSON 대신 다른 응답을 반환했습니다.','REJECTED':'Blogger Bridge가 요청을 거절했습니다.'}
     d={'reason':reason,'summary':summaries[reason],'stage':'Blogger 조회','action':'작업 기록의 오류 분류를 확인하세요. 인증값을 다시 입력하기 전에 원인을 확인해야 합니다.'}
@@ -53,12 +71,23 @@ class BridgeAdapter:
         except ValueError:
             raise bridge_failure('INVALID_JSON',elapsed=time.monotonic()-started) from None
     def _call(self,action,payload):
-        result=self.transport({'secret':self.secret,'action':action,'payload':payload})
+        try:result=self.transport({'secret':self.secret,'action':action,'payload':payload})
+        except BridgeError as exc:
+            if exc.diagnostic:
+                exc.diagnostic.update(stage=BRIDGE_ACTIONS.get(action,'Bridge 요청'),request_type=action if action in BRIDGE_ACTIONS else 'unknown')
+            raise
         if not isinstance(result,dict) or result.get('ok') is not True:
             # Never store raw server errors: they may contain deployment addresses or tokens.
             import re
-            match=re.fullmatch(r'blogger_http_(\d{3})',str(result.get('error',''))) if isinstance(result,dict) else None
-            raise bridge_failure('REJECTED',int(match[1]) if match else None)
+            code=result.get('error') if isinstance(result,dict) else None
+            match=re.fullmatch(r'(?:blogger|patch|post)_http_(\d{3})',code) if isinstance(code,str) else None
+            error=bridge_failure('REJECTED',int(match[1]) if match else None)
+            error.diagnostic.update(stage=BRIDGE_ACTIONS.get(action,'Bridge 요청'),request_type=action if action in BRIDGE_ACTIONS else 'unknown')
+            if isinstance(code,str) and code in REJECTIONS:
+                summary,next_action=REJECTIONS[code]
+                error.args=(summary,);error.diagnostic.update(server_code=code,summary=summary,action=next_action)
+            elif match:error.diagnostic['server_code']=code
+            raise error
         if str(result.get('blogId'))!=self.blog_id: raise BridgeError('다른 블로그 응답: 동기화 중지')
         return result
     def list_metadata(self):

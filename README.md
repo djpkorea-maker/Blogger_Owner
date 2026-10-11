@@ -420,3 +420,9 @@ build_preflight.py는 Windows/Python3.12/Tk/Pillow/PyInstaller/Node 존재를 �
 ## 0.58 Windows 원격 빌드 설정
 수동 workflow_dispatch Windows GitHub Actions 구성. 저장소 최상위에 R3_0 내용을 배치하는 구조. contents read/persist-credentials false, 계정 키 없이 모의 테스트/빌드/무결성 검사 후 UNVERIFIED 개발 ZIP 보관. CLOUD_BUILD_KO.md에 미실행 및 저장소 연결 필요 명시. 공식 actions checkout/setup-python/upload-artifact 문서를 확인했으나 원격 실행은 미실시.
 164개 Python 모의 자동 테스트 통과. 실제 Windows/API 연결 검증 미완료.
+# Dev82: resume images after read-only Bridge migration
+
+Dev81 retained a request ID before sending an upload and blocked every non-DONE journal response. After updating a read-only Bridge, a confirmed NOT_FOUND request could not progress. Dev82 distinguishes an absent start record from RUNNING/unknown outcomes: recheck bytes and destination, start only the same image request ID on an authenticated NOT_FOUND, and adopt a matching DONE receipt without another upload. Post creation, PATCH, publishing and rollback are not replayed by this recovery. Public pixel/ALT/caption and article/link gates still run before PASS.
+
+Final-validation HOLD is recorded with its reason rather than as a completed validation. Allowlisted server errors identify read-only deployment, disabled writes, authentication, busy Bridge, and sharing failures without persisting arbitrary remote text. Existing body, two candidates, request IDs, receipts, settings and database are preserved. The article policy remains 0.81 because its content rules have not changed. User-PC/account completion remains unverified until exercised with the actual setup.
+
