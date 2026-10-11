@@ -8,6 +8,10 @@ from urllib.parse import urlparse
 from .sync import anomaly,now
 
 ENGINE_VERSION='R3.0-fast-0.2'
+# Program structure requirement, not a Google/AdSense approval rule.
+MIN_TEXT_LENGTH=1500
+TARGET_TEXT_LENGTH=1800
+TARGET_MAX_TEXT_LENGTH=2800
 
 class Document(HTMLParser):
     VOID={'area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr'}
@@ -39,6 +43,9 @@ class Document(HTMLParser):
         if not self.hidden: self.text.append(data)
 
 def normalize(text): return re.sub(r'\s+',' ',text).strip().lower()
+def text_length(content):
+    return len(normalize(' '.join(Document(content).text)))
+
 def shingles(text):
     text=normalize(text)
     return {text[i:i+8] for i in range(max(0,len(text)-7))}
@@ -65,7 +72,7 @@ def fast_check(post,others=()):
     if initial.startswith('EMPTY_'):
         return Result(initial,'ANOMALY',['제목 또는 본문 누락'],{})
     doc=Document(post['content']); text=' '.join(doc.text); issues=[]
-    if len(normalize(text))<1500: issues.append('본문 길이 검토 필요')
+    if len(normalize(text))<MIN_TEXT_LENGTH: issues.append('본문 길이 검토 필요')
     if 'h1' in doc.headings: issues.append('본문 H1 발견')
     if doc.headings.count('h2')<2: issues.append('H2 구성 검토 필요')
     if len(doc.images)<2: issues.append('이미지 2장 미만')
@@ -90,7 +97,7 @@ def fast_check(post,others=()):
         score=len(current & prior)/max(1,min(len(current),len(prior)))
         if score>=0.75 and len(current)>=150: similar.append({'post_id':other['post_id'],'overlap':round(score,3)})
     if similar: issues.append('다른 글과 높은 기본 유사도')
-    metrics={'text_length':len(normalize(text)),'images':len(doc.images),'internal_links':internal,'external_links':external,'title_overlap':round(overlap,3),'similar_posts':similar}
+    metrics={'text_length':len(normalize(text)),'text_minimum':MIN_TEXT_LENGTH,'text_deficit':max(0,MIN_TEXT_LENGTH-len(normalize(text))),'images':len(doc.images),'internal_links':internal,'external_links':external,'title_overlap':round(overlap,3),'similar_posts':similar}
     grade='SCHEDULED_HOLD' if state=='SCHEDULED' else 'NEEDS_DEEP'
     if initial=='INCOMPLETE_DRAFT': grade=initial
     # Formal checks alone cannot prove factual safety, utility or pixel relevance.

@@ -167,8 +167,9 @@ class Replacement:
     def capture(self,pid,p,g,job):
         record=g.load_job(job);payload=record['payload']
         p['replacement_stage']=record['stage']
-        for key in ('text_versions','text_review_history','text_repair_attempts','image_candidates','fact_search_attempts','image_pipeline'):
+        for key in ('text_versions','text_review_history','text_repair_attempts','image_candidates','fact_search_attempts','image_pipeline','text_repair_run'):
             if payload.get(key):p[key]=deepcopy(payload[key])
+        p['generation_text_metrics']=deepcopy(payload.get('fast',{}).get('metrics',{}))
         if payload.get('deep'):p['generation_text_review']=deepcopy(payload['deep'])
         else:p.pop('generation_text_review',None)
         if payload.get('generation_evidence_recovery'):

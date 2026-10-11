@@ -3,7 +3,7 @@ import json
 from dataclasses import asdict
 from .tasks import Cancelled
 from .sync import now,digest
-from .gates import normalize,shingles,Document,fast_check
+from .gates import normalize,shingles,Document,fast_check,TARGET_TEXT_LENGTH,TARGET_MAX_TEXT_LENGTH
 from .evidence import Research,EvidenceHold
 from .deep import evaluate
 
@@ -117,7 +117,7 @@ class Generation:
             if payload.get('writer_evidence_hash')==evidence_hash and payload.get('content'):
                 article={'content_html':payload['content'],'search_description':payload.get('search_description','')}
             else:
-                article=self.ai.object('다음 근거 장부의 사실만 사용하여 블로그 글을 작성하세요. 없는 수치·원인·경험을 만들지 마세요. 특정 제품 지침을 모든 제품에 일반화하지 마세요. 조건·예외·실제 점검 순서를 포함하세요. 원문과 검증된 인용에 없는 안전 조작을 추가하지 마세요. HTML 본문 1800~2800자, H1 제외, H2 사용, 내부 메타데이터 제외. content_html:문자열, search_description:문자열(150자 이하). 이미지는 아직 삽입하지 마세요.\n'+json.dumps(writer_context(title,topic,payload['evidence']),ensure_ascii=False))
+                article=self.ai.object('다음 근거 장부의 사실만 사용하여 블로그 글을 작성하세요. 없는 수치·원인·경험을 만들지 마세요. 특정 제품 지침을 모든 제품에 일반화하지 마세요. 조건·예외·실제 점검 순서를 포함하세요. 원문과 검증된 인용에 없는 안전 조작을 추가하지 마세요. HTML 태그를 제외하고 공백을 정규화한 실제 본문 '+str(TARGET_TEXT_LENGTH)+'~'+str(TARGET_MAX_TEXT_LENGTH)+'자, H1 제외, H2 최소 2개, 내부 메타데이터 제외. 글자 수를 채우려고 문장 반복·추측·근거 없는 수치·조작을 추가하지 마세요. 모델별 설명은 검증된 제품·조건에만 한정하고 그 대상을 확인하지 못하면 해당 동작 설명을 쓰지 마세요. content_html:문자열, search_description:문자열(150자 이하). 이미지는 아직 삽입하지 마세요.\n'+json.dumps(writer_context(title,topic,payload['evidence']),ensure_ascii=False))
                 payload.pop('image_candidates',None)
             html=article.get('content_html'); description=article.get('search_description')
             if isinstance(html,str) and html.strip():payload['draft_content']=html

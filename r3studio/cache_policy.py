@@ -1,7 +1,7 @@
 """Persistent Dev70 checkpoint for Dev71 changed-only reads; no DB reset on upgrade."""
 import json
 from .sync import now
-VERSION=79
+VERSION=80
 
 def force_whole_review(version=VERSION,force=False):
     return force or version<71
