@@ -21,17 +21,23 @@ def display_url(value):
 
 class ArticleContext(HTMLParser):
     def __init__(self,content):
-        super().__init__();self.text=[];self.links=[];self.hidden=0;self.feed(content)
+        from .article_policy import strip_auxiliary
+        super().__init__();self.text=[];self.links=[];self.hidden=0;self.stack=[];self.feed(strip_auxiliary(content))
     def handle_starttag(self,tag,attrs):
-        if tag in ('script','style'):self.hidden+=1
+        ignored=bool(self.hidden) or tag in ('script','style','figure','figcaption','nav','footer') or (tag=='section' and dict(attrs).get('data-r3-kind') in ('related','references'))
+        if tag not in ('img','br','hr','meta','link','input','source','wbr'):self.stack.append((tag,ignored));self.hidden=int(ignored)
         if tag=='a':
             url=dict(attrs).get('href','')
             if url.startswith('https://'):
                 parsed=urlsplit(url)
                 if parsed.hostname and not parsed.username and not parsed.password:self.links.append(url) # Keep document-selecting query values for research; redact only in display.
-        if tag in ('p','h1','h2','h3','li','br'):self.text.append('\n')
+        if not self.hidden and tag in ('p','h1','h2','h3','li','br'):self.text.append('\n')
     def handle_endtag(self,tag):
-        if tag in ('script','style'):self.hidden=max(0,self.hidden-1)
+        if not self.hidden and tag in ('p','h1','h2','h3','li'):self.text.append('\n')
+        for index in range(len(self.stack)-1,-1,-1):
+            if self.stack[index][0]==tag:
+                self.stack=self.stack[:index];break
+        self.hidden=int(self.stack[-1][1]) if self.stack else 0
     def handle_data(self,data):
         if not self.hidden:self.text.append(data)
     def context(self):
@@ -39,7 +45,7 @@ class ArticleContext(HTMLParser):
         return {'article_text':'\n'.join(lines)[:30000],'existing_urls':list(dict.fromkeys(self.links))[:40],'verification_targets':lines[:16]}
 
 
-def validate_pack(pack,check_domains=True):
+def validate_pack(pack,check_domains=True,check_coverage=True):
     if not isinstance(pack,dict): raise EvidenceHold('근거 자료 형식 오류')
     sources=pack.get('sources',[]); facts=pack.get('facts',[])
     if not isinstance(sources,list) or not isinstance(facts,list): raise EvidenceHold('근거 자료 형식 오류')
@@ -61,8 +67,9 @@ def validate_pack(pack,check_domains=True):
     if len(supported)<4: issues.append('근거 연결 사실 4개 미만')
     if sum(f.get('core') is True for f in supported)<2: issues.append('핵심 근거 2개 미만')
     if not any(f.get('kind')=='practical' for f in supported): issues.append('실제 확인·활용 근거 부족')
-    if not any(f.get('kind')=='condition' for f in supported): issues.append('조건·예외 근거 부족')
-    if issues: raise EvidenceHold(' / '.join(issues))
+    from .ledger_conditions import has_condition
+    if not any(has_condition(f) for f in supported): issues.append('조건·예외 근거 부족')
+    if issues and check_coverage: raise EvidenceHold(' / '.join(issues))
     return digest(pack)
 
 def ledger_diagnostic(pack):
@@ -79,9 +86,12 @@ def ledger_diagnostic(pack):
         if f.get('kind') not in ('core','practical','condition','other'):issues.append(f'사실 {index}: kind 분류 오류 또는 누락')
         refs=f.get('source_ids')
         if isinstance(refs,list) and refs and all(isinstance(s,str) and s in ids for s in refs) and isinstance(f.get('text'),str) and f['text'].strip():linked.append(f)
+    from .ledger_conditions import has_condition
     return {'state':'FORMAT' if issues else 'COVERAGE','issues':issues[:20],
+            'condition_facts':sum(has_condition(f) for f in linked),
+            'practical_facts':sum(f.get('kind')=='practical' for f in linked),
             'linked_facts':len(linked),'core_facts':sum(f.get('core') is True for f in linked),
-            'facts':[{'text':f['text'][:600],'core':f.get('core'),'kind':f.get('kind')} for f in linked[:12]]}
+            'facts':[{'text':f['text'][:600],'core':f.get('core'),'kind':f.get('kind'),'condition_excerpt':f.get('condition_role',{}).get('excerpt','')} for f in linked[:12]]}
 
 def ledger_recovery(message):
     if '형식' in message or '중복 출처 ID' in message or '중복 사실 ID' in message:return False,'형식 보완 · 검색 결과 재사용'
@@ -91,7 +101,7 @@ def ledger_recovery(message):
 class Research:
     def __init__(self,ai): self.ai=ai
     def collect(self,title,topic,progress=lambda *args:None,article=None):
-        collected=[]; notes=[];trace=[];search_needed=True;resolved_cache={};url_mappings=[];timeout_recovery_used=False;previous_pack=None;search_count=0;repair_count=0;attempt=-1
+        collected=[]; notes=[];trace=[];search_needed=True;resolved_cache={};url_mappings=[];timeout_recovery_used=False;previous_pack=None;search_count=0;repair_count=0;attempt=-1;condition_review_used=False;safe_partial=None
         context=ArticleContext(article or '').context()
         diagnostic={'reason':'EVIDENCE_INCOMPLETE','stage':'근거 조사','action':'아래 검증 대상 문장과 출처를 확인하세요. 미검증은 사실 오류 판정이 아닙니다.','verification_targets':context['verification_targets'],'existing_urls':context['existing_urls'],'search_urls':[],'unmatched_urls':[],'attempts':trace}
         # Searches and ledger-only repairs consume independent bounded budgets.
@@ -184,15 +194,23 @@ class Research:
                 break
             if pending:pending['recovery_state']='EXECUTED'
             previous_pack={k:pack[k] for k in ('sources','facts','claim_checks') if k in pack} if isinstance(pack,dict) else None
+            if isinstance(pack,dict) and isinstance(pack.get('facts'),list):
+                for f in pack['facts']:
+                    if isinstance(f,dict):f.pop('condition_role',None)
             diagnostic['ledger']=ledger_diagnostic(pack)
             if isinstance(pack,dict):
                 claims=pack.get('claim_checks',[])
                 diagnostic['unverified_claims']=[{'text':c['text'][:1500],'reason':c.get('reason','근거 연결 미완료')[:1000]} for c in claims if isinstance(c,dict) and isinstance(c.get('text'),str) and isinstance(c.get('reason',''),str) and c.get('status')=='UNVERIFIED'][:30] if isinstance(claims,list) else []
             try:
-                validate_pack(pack,check_domains=False)
+                validate_pack(pack,check_domains=False,check_coverage=False)
             except EvidenceHold as exc:
                 if fail(str(exc)):continue
                 break
+            try:validate_pack(pack,check_domains=False)
+            except EvidenceHold as exc:
+                if str(exc)!='조건·예외 근거 부족':
+                    if fail(str(exc)):continue
+                    break
             pack.pop('original_verification',None) # Never trust a verification stamp produced by the model.
             actual={c['url'] for r in collected for c in r['citations'] if isinstance(c,dict) and isinstance(c.get('url'),str)}
             # A fragment only names a section of the same searched document. Do not
@@ -220,29 +238,68 @@ class Research:
                 for fact in pack['facts']:fact['text']=norm(fact['article_excerpt'])
             from .source_urls import resolve_pack
             pack=resolve_pack(pack,progress=progress)
+            from copy import deepcopy
+            # Retain only a shape-valid, searched-URL-bound, current-prose-bound draft.
+            safe_partial=deepcopy(pack)
+            safe_partial.update(retrieved_at=now(),source_url_mappings=deepcopy(url_mappings))
             try:validate_pack(pack)
             except EvidenceHold as exc:
-                if fail(str(exc),True):continue
-                break
+                if str(exc)=='조건·예외 근거 부족' and not condition_review_used:
+                    condition_review_used=True
+                    progress('조건·예외 분류 재확인 · 1회 한도',0,1)
+                    from .ledger_conditions import review
+                    try:
+                        pack,event=review(self.ai,pack,context['article_text'] if article is not None else None)
+                        diagnostic['condition_role_review']=event
+                        diagnostic['ledger']=ledger_diagnostic(pack)
+                        safe_partial=deepcopy(pack);safe_partial['retrieved_at']=now()
+                        validate_pack(pack)
+                    except EvidenceHold as role_error:
+                        diagnostic.setdefault('condition_role_review',{'state':'FAILED','limit':1,'truth_verified':False})
+                        diagnostic['condition_role_review']['reason']=str(role_error)
+                        if fail(str(role_error)):continue
+                        break
+                else:
+                    if fail(str(exc)):continue
+                    break
+            if article is not None and diagnostic.get('unverified_claims'):
+                diagnostic.update(summary='검색 단계에서 근거 미확보로 지적된 본문 문장 확인 필요',
+                                  stage='본문 근거 연결 확인',research_claims_only=True,
+                                  action='현재 본문·이미지는 보존했습니다. 지적 문장을 원문과 대조해 보완 후보를 만들고 별도로 재검증하세요.')
+                safe_partial['evidence_review']={'diagnostic_only':True,'diagnostic':deepcopy(diagnostic),
+                    'originals':{},'claims':[],'trusted_sources':[]}
+                error=EvidenceHold(diagnostic['summary'],trace,diagnostic)
+                error.partial_pack=safe_partial
+                raise error
             pack['source_url_mappings']=url_mappings
             pack['retrieved_at']=now();pack['grounding']=collected;pack['research_attempts']=trace;pack['research_budget']=budget();return pack
         message='근거 조사 미완료: '+str(notes[0] if notes else '자료 부족')
         diagnostic['summary']=message
-        raise EvidenceHold(message,trace,diagnostic)
+        diagnostic.update(research_claims_only=True,claims_evaluated=False,failure_phase='RESEARCH_LEDGER')
+        error=EvidenceHold(message,trace,diagnostic)
+        if safe_partial:
+            safe_partial['evidence_review']={'diagnostic_only':True,'diagnostic':dict(diagnostic),'originals':{},'claims':[],'trusted_sources':[]}
+            error.partial_pack=safe_partial
+        raise error
 
 def collect_cached(store,ai,title,topic,scope,progress=lambda *args:None,max_age_hours=168,article=None,allow_partial=False,recheck_originals=False,record_review=lambda value:None):
     from datetime import datetime,timezone
     db=store.db
     db.execute('CREATE TABLE IF NOT EXISTS evidence_packs(cache_key TEXT PRIMARY KEY,created_at TEXT,payload TEXT)'); db.commit()
-    key=digest({'title':title,'topic':topic,'scope':scope,'model':ai.model,'version':'evidence-0.66','article_hash':digest(article) if article is not None else None})
+    key=digest({'title':title,'topic':topic,'scope':scope,'model':ai.model,'version':'evidence-0.87','article_hash':digest(article) if article is not None else None})
     old=db.execute('SELECT * FROM evidence_packs WHERE cache_key=?',(key,)).fetchone()
     if old:
         age=(datetime.now(timezone.utc)-datetime.fromisoformat(old['created_at'])).total_seconds()/3600
         if 0<=age<max_age_hours:
             progress('기존 근거 재사용',1,1)
             pack=json.loads(old['payload']);validate_pack(pack);return pack
-    pack=Research(ai).collect(title,topic,progress,article=article)
     from .sources import SourceReader,verify_origins
+    try:pack=Research(ai).collect(title,topic,progress,article=article)
+    except EvidenceHold as error:
+        partial=getattr(error,'partial_pack',None)
+        if not allow_partial or not isinstance(partial,dict):raise
+        partial['evidence_review']['originals']=SourceReader(store).read_many(partial['sources'],progress)
+        return partial # Diagnostic repair context, never cached or granted PASS.
     try:
         pack=verify_origins(ai,pack,SourceReader(store),progress)
     except EvidenceHold as error:

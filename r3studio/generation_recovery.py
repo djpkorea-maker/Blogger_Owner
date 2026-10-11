@@ -4,6 +4,7 @@ from copy import deepcopy
 from urllib.parse import urlsplit
 from .sync import now, digest
 from .evidence import EvidenceHold, display_url, validate_pack
+from .ledger_conditions import has_condition
 from .sources import verify_origins, norm
 from .source_domains import registered_domain
 
@@ -57,7 +58,7 @@ def coverage(pack):
                          'used_sources': len(used), 'used_domains': len(domains), 'supported_facts': len(facts),
                          'core_facts': sum(f.get('core') is True for f in facts),
                          'practical_facts': sum(f.get('kind') == 'practical' for f in facts),
-                         'condition_facts': sum(f.get('kind') == 'condition' for f in facts)},
+                         'condition_facts': sum(has_condition(f) for f in facts)},
             'source_checks': checks,
             'unverified_claims': [{'text': f['text'], 'reason': '해당 문장을 직접 지원하는 원문 인용 미확보'}
                                   for f in pack.get('facts', []) if f['id'] not in {v['id'] for v in facts}]}

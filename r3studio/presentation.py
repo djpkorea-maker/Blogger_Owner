@@ -190,8 +190,15 @@ def diagnostic_lines(detail):
         if 'linked_facts' in ledger:lines.append(f'AI 장부의 근거 연결 사실 {ledger["linked_facts"]}개 / 핵심 분류 {ledger["core_facts"]}개 · 원문 검증 통과와 별도')
         lines.extend('• '+issue for issue in ledger.get('issues',[]))
         lines.extend('장부 사실: '+f['text']+' / 핵심 분류: '+str(f.get('core'))+' / 유형: '+str(f.get('kind')) for f in ledger.get('facts',[]))
-    for claim in ([] if pending else detail.get('unverified_claims',[])):
-        lines.append('근거 미확보 주장: '+claim['text']+' / '+claim['reason'])
+    role=detail.get('condition_role_review',{})
+    if role:
+        lines.append('조건·예외 분류 재확인: '+str(role.get('state','미확인'))+' · 1회 한도 · 사실 지원은 별도 원문 검증')
+        lines.extend('조건 구절: '+c['excerpt'] for c in role.get('changes',[]))
+    if 'condition_facts' in ledger:
+        lines.append('AI 장부 유형: 실용 '+str(ledger.get('practical_facts',0))+'개 / 조건·예외 '+str(ledger['condition_facts'])+'개 · 원문 지원 판정과 별도')
+    research=detail.get('research_claims_only') is True
+    for claim in ([] if pending and not research else detail.get('unverified_claims',[])):
+        lines.append(('검색 단계 근거 연결 미확보 문장: ' if research else '근거 미확보 주장: ')+claim['text']+' / '+claim['reason'])
         checked_claim=next((c for c in detail.get('claim_checks',[]) if c.get('text')==claim['text']),{})
         if checked_claim.get('source_urls'):
             lines.append('이 주장에 연결된 원문: '+' / '.join(checked_claim['source_urls']))

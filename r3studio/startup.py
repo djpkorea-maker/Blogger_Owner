@@ -73,7 +73,7 @@ def smoke_test():
             os.environ['LOCALAPPDATA']=folder
             root=tk.Tk();root.withdraw()
             app=App(root)
-            if 'Dev86 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
+            if 'Dev87 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
             root.update_idletasks() # No scheduled startup/network callbacks.
             if len(app.tabs.tabs())!=3:raise RuntimeError('세 메뉴 화면 구성 실패')
             if len(app.inspect_panes.panes())!=2:raise RuntimeError('목록·상세 조절 창 구성 실패')
@@ -168,6 +168,15 @@ def smoke_test():
             result.update(proposed_title=result['replacement_topic'],proposed_content='<h2>안전 점검</h2><p>전원을 끄고 확인합니다.</p>')
             compared=app.show_repair(result);root.update_idletasks()
             if held.winfo_exists() or not compared.preview_widgets or '전원을 끄고 확인합니다.' not in compared.preview_widgets[1].get('1.0','end'):raise RuntimeError('부분 본문 비교·보류창 종료 실패')
+            compared.destroy()
+            result.update(replacement_preview_ready=True,proposed_content=html2,
+                error_diagnostic={'reason':'EVIDENCE_INCOMPLETE','missing_criteria':'조건·예외 근거 부족',
+                                  'ledger':{'state':'COVERAGE','condition_facts':0}})
+            compared=app.show_repair(result);root.update_idletasks();calls.clear()
+            repair_button=find_button(compared,'근거 장부·미확보 문장 보완')
+            if repair_button is None:raise RuntimeError('장부 조건 보류의 보완 버튼 표시 실패')
+            repair_button.invoke()
+            if calls!=[('repair_evidence',{'proposal_id':71})]:raise RuntimeError('장부 보류 보완 동작 연결 실패')
             compared.destroy()
             # Exercise the new policy inside each frozen executable without AI
             # or network, including preservation of ordinary topic exclusion.

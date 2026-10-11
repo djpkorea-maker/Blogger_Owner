@@ -96,7 +96,8 @@ class Replacement:
     def resume(self,pid,generator):
         row,p=self.images.load(pid);self.images.baseline(p)
         if p.get('mode')!='REPLACEMENT':raise ImageHold('전체 교체 작업을 선택하세요.')
-        if p.get('error_diagnostic',{}).get('reason')=='EVIDENCE_ORIGINALS_INCOMPLETE' and p.get('replacement_preview_ready'):
+        from .final_text_repair import repairable_diagnostic
+        if repairable_diagnostic(p.get('error_diagnostic',{})) and p.get('replacement_preview_ready'):
             # Final evidence HOLD is a different state from text-ready generation.
             # Repair identified prose without restarting generation or image APIs.
             return self.images.repair_evidence(pid)

@@ -472,3 +472,14 @@ Final validation already saved image upload receipts before running the original
 Final validation may retry original review once using the same fetched, hash-checked originals and unchanged facts/source bindings. It does not search for new facts, alter prose, regenerate images, bypass the four-fact/core/independent-source checks, or write the post. Failed verification stays HOLD with per-claim diagnostics; only verified packs enter the evidence cache. Previously accepted local candidates, request IDs, upload receipts and the baseline Blogger post are preserved.
 
 Mock regressions exercise real Bridge client uploads followed by original-review failure, persisted diagnostics, exact-body preservation and resumed validation without duplicate uploads. Windows build and runner UI smoke results must be checked before distributing this artifact. Real Gemini and the user's end-to-end account workflow remain unverified.
+
+
+Dev87: 조건·예외 분류와 본문 미지원 문장 보완
+
+- 핵심/실용 사실에 이미 명시된 적용 조건은 1회 별도 분류합니다. 사실이나 출처를 추가하거나 검증 상태를 승격하지 않습니다.
+- 검색에서 지적된 본문 문장이 장부 4개 밖에 있어도 무시하지 않고 보류 진단과 보완 경로로 연결합니다.
+- 그림 설명·참고 자료는 본문 근거 검사에서 제외합니다. 이전 진단에 실제 그림 설명이 붙은 경우만 분리하고, 여러 문단의 정확한 현재 위치를 확인합니다.
+- 기존 전체 교체 작업을 불러온 뒤 ‘근거 장부·미확보 문장 보완’ 또는 ‘전체 교체 작업 이어서 진행’을 사용하세요. 새 본문·이미지 생성 버튼을 누를 필요가 없습니다.
+- 미지원 문단 보완 후보 → 원문 재검증 → 기존 이미지 2장·ALT·설명 대조 → 전체 최종 검사로 이어집니다. 본문 길이·출처·인용·안전 검사 기준은 유지합니다.
+- 기존 본문, 이미지 픽셀, 업로드 요청 번호/결과는 보존합니다. 최종 PASS 전에는 Blogger 적용 계획을 허용하지 않습니다.
+- Windows 자동 시험과 실제 내려받은 압축 구성·실행 파일 시험은 모의 환경입니다. 실제 Gemini·계정·Blogger 적용 완료는 별도 확인이 필요합니다.

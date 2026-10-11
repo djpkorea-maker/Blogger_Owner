@@ -19,6 +19,14 @@ MAX_EDITS=8
 def signature(p):
     return digest({'title':p.get('proposed_title',p['before']['title']),'content':p.get('proposed_content','')})
 
+def repairable_diagnostic(detail):
+    if not isinstance(detail,dict):return False
+    if detail.get('reason')=='EVIDENCE_ORIGINALS_INCOMPLETE':return True
+    return (detail.get('reason')=='EVIDENCE_INCOMPLETE'
+            and detail.get('ledger',{}).get('state')=='COVERAGE'
+            and (detail.get('research_claims_only') is True or
+                 detail.get('missing_criteria')=='조건·예외 근거 부족'))
+
 def paragraph_targets(content,diagnostic):
     """Bind literal ledger excerpts to normal paragraphs, never captions/references."""
     from .captions import Tree
@@ -36,15 +44,39 @@ def paragraph_targets(content,diagnostic):
                        'old_html':m.group(),'text':norm(''.join(doc.text)),'claims':[]})
     claims=diagnostic.get('unverified_claims',[])
     if not isinstance(claims,list) or not claims:raise EvidenceHold('문장별 미검증 기록이 없습니다. 최종 검증으로 상세 기록을 먼저 확보하세요.')
+    captions=[norm(Tree(m.group()).root.text()) for m in re.finditer(r'<figcaption\b[^>]*>[\s\S]*?</figcaption\s*>',content,re.I)]
+    compact=lambda value:re.sub(r'\s+','',norm(value))
+    stream='';ranges=[]
+    for b in blocks:
+        value=compact(b['text']);ranges.append((len(stream),len(stream)+len(value),b));stream+=value
     for claim in claims:
         text=norm(claim.get('text','')) if isinstance(claim,dict) else ''
-        matches=[b for b in blocks if len(text)>=10 and text in b['text']]
-        if len(matches)!=1:
+        excluded=''
+        for caption in sorted(captions,key=len,reverse=True):
+            if caption and text.endswith(caption) and len(text)>len(caption):
+                excluded=caption;text=text[:-len(caption)].strip();break
+        needle=compact(text);positions=[]
+        if len(needle)>=10:
+            pos=stream.find(needle)
+            while pos>=0:
+                positions.append(pos);pos=stream.find(needle,pos+1)
+        matches=[]
+        if len(positions)==1:
+            a=positions[0];z=a+len(needle)
+            matches=[(b,max(a,left)-left,min(z,right)-left) for left,right,b in ranges if a<right and z>left]
+            for first,second in zip(matches,matches[1:]):
+                if re.search(r'<h[1-6]\b',content[first[0]['end']:second[0]['start']],re.I):
+                    matches=[];break
+        if not matches or any(right-left<10 for _,left,right in matches):
             raise EvidenceHold('미검증 문장의 현재 본문 위치가 불명확합니다. 자동으로 문단을 추측해 수정하지 않았습니다.',
                 diagnostic={'reason':'FINAL_REPAIR_ANCHOR_MISSING','summary':'미검증 문장의 현재 본문 위치가 불명확합니다.',
                             'stage':'최종 근거 문장 위치 확인','unverified_claims':deepcopy(claims),
                             'action':'현재 본문과 진단 문장을 대조하세요. 본문·이미지는 보존했습니다.'})
-        matches[0]['claims'].append(deepcopy(claim))
+        for b,left,right in matches:
+            item=deepcopy(claim);item['text']=text if len(matches)==1 else compact(b['text'])[left:right]
+            item['diagnostic_text']=text
+            if excluded:item['excluded_caption']=excluded
+            b['claims'].append(item)
     targeted=[b for b in blocks if b['claims']]
     if len(targeted)>MAX_EDITS:raise EvidenceHold('보완 문단이 8개를 넘습니다. 자동 부분 보완 범위를 확인하세요.')
     return targeted
@@ -82,7 +114,8 @@ def apply_answer(content,blocks,answer):
     if doc.errors or doc.images!=Document(content).images or doc.headings!=Document(content).headings:
         raise EvidenceHold('보완 후 본문 구조·이미지 보존 확인 필요')
     actual=body_text(result)
-    if any(norm(c['text']).lower() in actual for b in blocks for c in b['claims']):
+    compact=lambda value:re.sub(r'\s+','',norm(value)).lower()
+    if any(compact(c['text']) in compact(actual) for b in blocks for c in b['claims']):
         raise EvidenceHold('근거 미확보 주장이 보완 후보에 그대로 남아 있습니다.')
     return result,changes
 
@@ -106,10 +139,11 @@ def repair(service,pid):
     if p.get('mode')!='REPLACEMENT' or not p.get('replacement_preview_ready'):
         raise EvidenceHold('완성된 전체 교체 수정안에서 근거 미확보 문장을 보완하세요.')
     problem=deepcopy(p.get('error_diagnostic',{}))
-    if problem.get('reason')!='EVIDENCE_ORIGINALS_INCOMPLETE':
+    if not repairable_diagnostic(problem):
         raise EvidenceHold('원문 근거 미확보 진단이 있어야 문장을 보완할 수 있습니다. 연결·형식 오류로 본문을 수정하지 않습니다.')
     from .source_domains import claims_not_evaluated
-    if claims_not_evaluated(problem):
+    research=problem.get('reason')=='EVIDENCE_INCOMPLETE'
+    if (claims_not_evaluated(problem) and not research) or (research and not problem.get('unverified_claims')):
         service.progress('출처 단계 재검증 · 본문·이미지 보존',0,1)
         return service.validate(pid)
     content=p['proposed_content'];title=p.get('proposed_title',p['before']['title']);old_hash=signature(p)
@@ -121,7 +155,6 @@ def repair(service,pid):
     service.save(pid,p)
     committed=False
     try:
-        blocks=paragraph_targets(content,problem)
         pack=p.get('final_evidence_pack') if p.get('final_evidence_for')==old_hash else None
         if not isinstance(pack,dict):
             service.progress('보완용 현재 본문 원문 기록 확보',0,1)
@@ -131,7 +164,28 @@ def repair(service,pid):
                 service.progress,article=article,allow_partial=True)
             p['final_evidence_pack']=deepcopy(pack);p['final_evidence_for']=old_hash
             service.save(pid,p)
+        if research:
+            from .sources import SourceReader,verify_origins
+            originals=SourceReader(service.store).read_many(pack['sources'],service.progress)
+            pack.pop('original_verification',None)
+            pack['evidence_review']={'diagnostic_only':True,'originals':originals,'diagnostic':deepcopy(problem)}
+            class Captured:
+                def read_many(self,sources,progress):
+                    return deepcopy(originals)
+            service.progress('검색 진단 문장·장부 사실의 실제 원문 대조',0,1)
+            try:
+                pack=verify_origins(service.ai,pack,Captured(),service.progress)
+            except EvidenceHold as source_error:
+                if claims_not_evaluated(source_error.diagnostic):raise
+                pack=source_error.partial_pack
+                original_problem=source_error.diagnostic
+                problem['original_support_review']=deepcopy(original_problem)
+                existing={norm(c['text']) for c in problem.get('unverified_claims',[])}
+                problem['unverified_claims'].extend(deepcopy(c) for c in original_problem.get('unverified_claims',[]) if norm(c['text']) not in existing)
+            p['final_evidence_pack']=deepcopy(pack);p['final_evidence_for']=old_hash
+            run['diagnostic']=deepcopy(problem);service.save(pid,p)
         context=original_context(pack)
+        blocks=paragraph_targets(content,problem)
         service.progress('근거 미확보 문단 보완 · 1회 한도',0,1)
         p['validation_stage']='근거 미확보 문단 보완 · 1회 한도';service.save(pid,p)
         prompt=('R3 FINAL EVIDENCE PARAGRAPH REPAIR: 최종 검증에서 미지원으로 판정된 문단만 보완하세요. '
