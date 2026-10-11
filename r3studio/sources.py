@@ -105,7 +105,7 @@ def verify_origins(ai,pack,reader,progress=lambda *args:None,review_feedback=Non
             'source_independence':independence,
             'verification_targets':[f['text'] for f in pack['facts']] if not claims_evaluated else [],
             'search_urls':[display_url(source['url']) for source in pack['sources']],
-            'source_checks':[{'url':display_url(source['url']),'state':originals.get(source['id'],{}).get('status','NOT_CHECKED'),'reason':originals.get(source['id'],{}).get('reason','')} for source in pack['sources']]}
+            'source_checks':[{'source_number':index,'url':display_url(source['url']),'state':originals.get(source['id'],{}).get('status','NOT_CHECKED'),'reason':originals.get(source['id'],{}).get('reason','')} for index,source in enumerate(pack['sources'],1)]}
         if not claims_evaluated:
             diagnostic['action']='본문·이미지를 보존했습니다. 원문 접근과 A/B 등급·발행 주체·등록 도메인 판정을 확인한 뒤 출처 단계를 다시 검증하세요. 문장 보완은 개별 지원 판정 후 진행합니다.'
         diagnostic['verification_counts']={'listed_facts':len(pack['facts']),

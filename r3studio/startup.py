@@ -73,7 +73,7 @@ def smoke_test():
             os.environ['LOCALAPPDATA']=folder
             root=tk.Tk();root.withdraw()
             app=App(root)
-            if 'Dev87 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
+            if 'Dev88 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
             root.update_idletasks() # No scheduled startup/network callbacks.
             if len(app.tabs.tabs())!=3:raise RuntimeError('세 메뉴 화면 구성 실패')
             if len(app.inspect_panes.panes())!=2:raise RuntimeError('목록·상세 조절 창 구성 실패')
@@ -258,6 +258,28 @@ def smoke_test():
                 return {'outputs':[{'type':'text','text':json.dumps(value,ensure_ascii=False)}]}
             response,trace=request_review(Gemini('local-smoke-test-only','mock',format_transport),context)
             if len(calls)!=2 or trace[-1]['state']!='VALID_SHAPE' or any(c['response_format']['schema']!=SCHEMA for c in calls):raise RuntimeError('원문 검사 필수 스키마·형식 재검사 실패')
+            # Reproduce a sources[4] row from a known but unreadable ledger
+            # inside both downloaded frozen EXEs, with the real JSON client.
+            shadow_pack=deepcopy(refilled)
+            shadow_pack.pop('original_verification',None)
+            shadow_pack['sources'] += [{'id':'not_read_3','url':'https://third.example/manual','grade':'A'},
+                                       {'id':'not_read_4','url':'https://fourth.example/manual','grade':'A'}]
+            shadow_review=deepcopy(response)
+            shadow_review['sources'] += [{'source_id':sid,'grade':'UNKNOWN','publisher':''} for sid in ('not_read_3','not_read_4')]
+            class ShadowReader:
+                def read_many(self,sources,progress):
+                    values=deepcopy(context['originals'])
+                    values.update({sid:{'status':'UNAVAILABLE','reason':'synthetic access failure'} for sid in ('not_read_3','not_read_4')})
+                    return values
+            shadow_calls=[]
+            def shadow_transport(payload):
+                shadow_calls.append(payload)
+                return {'outputs':[{'type':'text','text':json.dumps(shadow_review,ensure_ascii=False)}]}
+            from .sources import verify_origins,require_originals
+            shadow_verified=verify_origins(Gemini('local-smoke-test-only','mock',shadow_transport),shadow_pack,ShadowReader())
+            require_originals(shadow_verified)
+            if len(shadow_calls)!=1 or set(shadow_verified['original_verification']['trusted_sources'])!=set(context['originals']):raise RuntimeError('미확보 장부 출처 ID 구분·근거 제외 실패')
+            if shadow_verified['original_verification']['response_format_attempts'][0]['source_contract']['unavailable_response_rows']!=[3,4]:raise RuntimeError('미확보 원문 응답 행 기록 실패')
             settings=Settings(Path(folder)/'smoke-settings.json')
             settings.save({'R3_BRIDGE_SECRET':'local-smoke-test-only','R3_START_MODE':'DEMO'})
             if settings.load().get('R3_BRIDGE_SECRET')!='local-smoke-test-only':raise RuntimeError('DPAPI 복호화 시험 실패')

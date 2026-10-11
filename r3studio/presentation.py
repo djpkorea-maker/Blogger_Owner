@@ -171,6 +171,9 @@ def diagnostic_lines(detail):
         lines.append('부족한 근거 추가 검색: '+str(detail['supplemental_searches'])+'/1회')
     for source in detail.get('supplemental_source_checks',[]):
         lines.append('추가 원문: '+source['url']+' / '+source['state']+(' / '+source['reason'] if source.get('reason') else ''))
+    contract=detail.get('response_source_contract',{})
+    if contract:
+        lines.append('출처 ID 대조: 장부 '+str(contract['ledger_sources'])+'개 / 읽은 원문 '+str(contract['readable_originals'])+'개 / 원문 미확보 '+str(contract['unavailable_ledger_sources'])+'개')
     if detail.get('response_shape_issues'):
         lines.append('원문 검사 응답 형식 문제 · 사실 정확성 판정과 별도:')
         lines.extend('• '+issue for issue in detail['response_shape_issues'])
@@ -178,6 +181,8 @@ def diagnostic_lines(detail):
         state='형식 확인 완료 · 사실 검증은 별도' if attempt.get('state')=='VALID_SHAPE' else '형식 오류'
         lines.append('원문 검사 응답 '+str(attempt['attempt'])+'차: '+state)
         lines.extend('• '+issue for issue in attempt.get('issues',[]))
+        excluded=attempt.get('source_contract',{}).get('unavailable_response_rows',[])
+        if excluded:lines.append('장부에 있으나 원문 미확보인 응답 출처 행: '+', '.join(str(i) for i in excluded)+' · 지원 근거·독립 출처 계산에서 제외')
     if detail.get('format_recovery_exhausted'):lines.append('같은 원문 형식 재검사 1회 한도 종료 · 본문 작성·발행 불가')
     if detail.get('missing_criteria'):lines.append('부족한 검사 기준: '+detail['missing_criteria'])
     budget=detail.get('research_budget',{})
@@ -211,7 +216,7 @@ def diagnostic_lines(detail):
             lines.append(label+' · 표시에서는 주소의 질의값·앵커 제외:')
             lines.extend('• '+url for url in detail[key])
     for source in detail.get('source_checks',[]):
-        lines.append('원문 접근: '+source['url']+' / '+source['state']+(' / '+source['reason'] if source.get('reason') else ''))
+        lines.append('원문 접근'+(' '+str(source['source_number']) if source.get('source_number') else '')+': '+source['url']+' / '+source['state']+(' / '+source['reason'] if source.get('reason') else ''))
     for attempt in detail.get('search_attempts',[]):
         lines.append('검색 복구 기록: '+attempt['reason']+(' / '+str(attempt['elapsed_seconds'])+'초' if attempt.get('elapsed_seconds') is not None else ''))
     for attempt in detail.get('attempts',[]):

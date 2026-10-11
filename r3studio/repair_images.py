@@ -225,7 +225,7 @@ class RepairImages:
             p['reason']=str(exc)
             if getattr(exc,'diagnostic',None):p['error_diagnostic']=exc.diagnostic
             partial=getattr(exc,'partial_pack',None)
-            if (isinstance(partial,dict) and getattr(exc,'diagnostic',{}).get('reason') in ('EVIDENCE_ORIGINALS_INCOMPLETE','EVIDENCE_INCOMPLETE')):
+            if (isinstance(partial,dict) and getattr(exc,'diagnostic',{}).get('reason') in ('EVIDENCE_ORIGINALS_INCOMPLETE','EVIDENCE_INCOMPLETE','ORIGINAL_REVIEW_FORMAT')):
                 from copy import deepcopy
                 p['final_evidence_pack']=deepcopy(partial)
                 p['final_evidence_for']=digest({'title':title,'content':p.get('proposed_content','')})
