@@ -319,7 +319,19 @@ def report(proposal):
         labels={'STARTED':'원문 대조 시작','HOLD':'보류','VERIFIED':'원문 대조 통과'}
         lines.append('최종 근거 검사 '+str(attempt.get('attempt',''))+'차: '+labels.get(attempt.get('state'),attempt.get('state','확인 필요')))
     for attempt in proposal.get('final_text_repairs',[]):
-        lines.append('\n최종 근거 문장 보완 · '+attempt.get('state','확인 필요')+' · 최대 1회 / 이번 클릭')
+        if attempt.get('repair_scope'):
+            scope=attempt['repair_scope']
+            lines.append('\n최종 근거 문장 보완 · '+attempt.get('state','확인 필요')+' · 묶음별 요청 1회')
+            lines.append('보완 범위: 지적 문단 '+str(scope['block_count'])+'개 · 설명 본문 '+str(scope['body_length'])+'자 중 '+str(scope['target_length'])+'자 ('+str(scope['target_percent'])+'%)')
+            lines.append('보완 요청: '+str(attempt.get('requests_started',0))+'/'+str(attempt.get('limit',0))+' 묶음 · 전체 후보 검증 전 현재 본문 보존')
+            for batch in attempt.get('batches',[]):
+                lines.append('묶음 '+str(batch['number'])+': '+', '.join(batch['block_ids'])+' · '+batch['state'])
+                if attempt.get('state')!='CANDIDATE' and not attempt.get('candidate_content'):
+                    for change in batch.get('edits',[]):
+                        lines.extend(['미반영 후보 보완 전: '+change.get('before_text',''),
+                                      '미반영 후보 보완 후: '+change.get('after_text','')])
+        else:
+            lines.append('\n최종 근거 문장 보완 · '+attempt.get('state','확인 필요')+' · 최대 1회 / 이번 클릭')
         if attempt.get('reason'):lines.append('보완 결과: '+attempt['reason'])
         if attempt.get('before_length') is not None:lines.append('본문 '+str(attempt['before_length'])+'자 → '+str(attempt.get('after_length','미완료'))+'자')
         for change in attempt.get('edits',[]):

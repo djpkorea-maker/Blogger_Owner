@@ -73,7 +73,7 @@ def smoke_test():
             os.environ['LOCALAPPDATA']=folder
             root=tk.Tk();root.withdraw()
             app=App(root)
-            if 'Dev88 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
+            if 'Dev89 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
             root.update_idletasks() # No scheduled startup/network callbacks.
             if len(app.tabs.tabs())!=3:raise RuntimeError('세 메뉴 화면 구성 실패')
             if len(app.inspect_panes.panes())!=2:raise RuntimeError('목록·상세 조절 창 구성 실패')
@@ -178,6 +178,32 @@ def smoke_test():
             repair_button.invoke()
             if calls!=[('repair_evidence',{'proposal_id':71})]:raise RuntimeError('장부 보류 보완 동작 연결 실패')
             compared.destroy()
+            # The old 50-percent HOLD has its own resume button. This is a
+            # saved local diagnostic, not an apply/rollback audit ID.
+            from .gates import Document
+            from .final_text_repair import (LEGACY_WIDE_MESSAGE,paragraph_targets,
+                repair_plan,repair_batches,apply_answer)
+            result['error_diagnostic']={'reason':'FINAL_EVIDENCE_REPAIR_HOLD','summary':LEGACY_WIDE_MESSAGE,
+                'original_evidence_diagnostic':{'reason':'EVIDENCE_ORIGINALS_INCOMPLETE',
+                                               'unverified_claims':[{'text':'미확보 문장입니다.'}]}}
+            compared=app.show_repair(result);root.update_idletasks();calls.clear()
+            wide_button=find_button(compared,'근거 지적 문단 나누어 보완 · 이미지 유지')
+            if wide_button is None:raise RuntimeError('이전 절반 범위 보류 재개 버튼 없음')
+            wide_button.invoke()
+            if calls!=[('repair_evidence',{'proposal_id':71})]:raise RuntimeError('절반 범위 보류 보완 연결 실패')
+            compared.destroy()
+            wide_claims=['예제 문서에 없는 수치 '+str(i)+'의 단정 문장입니다.' for i in range(5)]
+            wide_html='<h2>점검</h2><p>유지할 정상 안내입니다.</p>'
+            for i,claim in enumerate(wide_claims):
+                wide_html+='<p>'+claim+' '+('예제 원문에 확인된 설명을 그대로 보존합니다. '*8)+'</p>'
+                if i==0:wide_html+='<figure><img src="https://lh3.googleusercontent.com/smoke" alt="점검"><figcaption>그림 1. 기존 설명입니다.</figcaption></figure>'
+            wide_blocks=paragraph_targets(wide_html,{'unverified_claims':[{'text':claim} for claim in wide_claims]})
+            wide_scope=repair_plan(wide_html,wide_blocks)
+            if wide_scope['mode']!='BROAD_ANCHORED_PARAGRAPHS' or [len(g) for g in repair_batches(wide_blocks,wide_scope)]!=[4,1]:raise RuntimeError('지적 문단 넓은 범위 묶음 계산 실패')
+            wide_answer={'edits':[{'block_id':b['block_id'],'new_html':b['old_html'].replace(wide_claims[i],''),'reason':'원문 미확보 단정 제거'}
+                                  for i,b in enumerate(wide_blocks)]}
+            repaired,_=apply_answer(wide_html,wide_blocks,wide_answer)
+            if '유지할 정상 안내입니다.' not in repaired or Document(repaired).images!=Document(wide_html).images or any(c in repaired for c in wide_claims):raise RuntimeError('넓은 범위 지적 문단·기존 이미지 보존 실패')
             # Exercise the new policy inside each frozen executable without AI
             # or network, including preservation of ordinary topic exclusion.
             from .sync import Store,post_hash
