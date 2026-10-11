@@ -297,7 +297,7 @@ def report(proposal):
         deep=proposal['generation_text_review'];r=deep.get('review',{});metrics=proposal.get('generation_text_metrics',{})
         lines.extend(review_lines({'states':{k:r.get(k) for k in REQUIRED},'score':r.get('score'),'issues':deep.get('issues',[]),
             'findings':[],'unsupported_claims':[],'text_length':metrics.get('body_text_length'),'text_minimum':MIN_TEXT_LENGTH,
-            'text_deficit':max(0,MIN_TEXT_LENGTH-metrics['body_text_length']) if type(metrics.get('text_length')) is int else None}))
+            'text_deficit':max(0,MIN_TEXT_LENGTH-metrics['body_text_length']) if type(metrics.get('body_text_length')) is int else None}))
     from .fact_search import diagnostic_lines
     attempts=proposal.get('fact_search_attempts') or diagnostic.get('fact_search_attempts',[])
     if attempts:lines.extend(['\n독립 Fact 검색 기록']+diagnostic_lines(attempts))
