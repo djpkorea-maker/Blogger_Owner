@@ -154,9 +154,12 @@ class Gemini:
         finally:self.request_timeout_seconds=previous_timeout
 
         blocks=output_blocks(raw)
-        text='\n'.join(b.get('text','') for b in blocks if b.get('type')=='text')
+        text_blocks=[b for b in blocks if b.get('type')=='text']
+        if any(not isinstance(b.get('text',''),str) for b in text_blocks):
+            raise AIError('AI 응답 본문 형식 오류',{'reason':'INVALID_OUTPUT_BLOCK','summary':'응답 text 항목이 문자열이 아닙니다.'})
+        text='\n'.join(b.get('text','') for b in text_blocks)
         citations,search_diagnostic=search_metadata(raw,blocks)
-        if not text: raise AIError('AI가 유효한 본문을 반환하지 않았습니다.')
+        if not text and not search: raise AIError('AI가 유효한 본문을 반환하지 않았습니다.')
         result={'text':text,'citations':citations,'model':self.model,'search_enabled':search}
         if search:result['search_diagnostic']=search_diagnostic
         return result

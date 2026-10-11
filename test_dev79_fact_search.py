@@ -160,4 +160,47 @@ class Tests(unittest.TestCase):
         source={'url':'https://manufacturer.example/manual'}
         self.assertEqual(valid_citations({'citations':[source,source,{'url':'http://example.com'},None,{'url':42}]}),[source])
 
+
+    def test_search_only_error_metadata_is_reported_without_unrelated_empty_body_error(self):
+        raw=response('error');raw['steps']=raw['steps'][:-1]
+        result=Gemini('key','model',lambda p:raw).ask('query',search=True)
+        self.assertEqual(result['text'],'');self.assertEqual(result['citations'],[])
+        self.assertEqual(result['search_diagnostic']['execution'],'ERROR')
+        self.assertEqual(result['search_diagnostic']['error_count'],1)
+        with self.assertRaises(AIError):Gemini('key','model',lambda p:raw).ask('ordinary text')
+        raw['steps'].append({'type':'model_output','content':[{'type':'text','text':None}]})
+        with self.assertRaises(AIError) as caught:Gemini('key','model',lambda p:raw).ask('query',search=True)
+        self.assertEqual(caught.exception.diagnostic['reason'],'INVALID_OUTPUT_BLOCK')
+
+    def test_real_initial_generation_recovers_once_or_preserves_writer_body_without_recursive_search(self):
+        from test_dev75_original_refill import AI as OriginalAI,QUOTE
+        from r3studio.sources import SourceReader
+        from r3studio.replacement import Replacement
+        for kinds,success in [(['none','cited'],True),(['result','result'],False)]:
+            with self.subTest(success=success),tempfile.TemporaryDirectory() as d:
+                class InitialAI(OriginalAI):
+                    def __init__(self):
+                        super().__init__();self.responses=list(kinds);self.fact_calls=0
+                        self.client=Gemini('key','gemini-3.8-flash',self.transport)
+                    def transport(self,payload):return response(self.responses.pop(0))
+                    def ask(self,prompt,*args,**kw):
+                        if '완성 글의 핵심 사실' in prompt or 'R3 FACT SEARCH CITATION RECOVERY' in prompt:
+                            self.fact_calls+=1;return self.client.ask(prompt,*args,**kw)
+                        return super().ask(prompt,*args,**kw)
+                s,a,pid=fixture.Tests().setup_case(d);ai=InitialAI();generator=fixture.Generator()
+                reader=SourceReader(s,lambda url:{'status':200,'url':url,'headers':{'content-type':'text/html'},'body':'<p>'+QUOTE*8+'</p>'})
+                with patch('r3studio.sources.SourceReader',return_value=reader):
+                    svc=Replacement(s,a,ai,d);out=svc.start(pid,TITLE,generator)
+                self.assertEqual(ai.fact_calls,2);self.assertEqual(len(ai.writers),1);self.assertTrue(out['proposed_content'])
+                self.assertEqual(out['proposed_title'],TITLE);self.assertEqual(a.get_post('1')['content'],out['before']['content'])
+                payload=Generation(s,ai,'blog').load_job(out['replacement_job_id'])['payload']
+                self.assertTrue(payload['text_versions'])
+                if success:
+                    self.assertTrue(out.get('replacement_preview_ready'),out.get('reason'));self.assertEqual(len(generator.calls),2)
+                else:
+                    self.assertFalse(out.get('replacement_preview_ready'));self.assertEqual(generator.calls,[])
+                    self.assertNotIn('deep',payload);self.assertNotIn('independent_fact_search',payload)
+                    self.assertEqual(out['error_diagnostic']['reason'],'FACT_SEARCH_UNCITED')
+                s.close()
+
 if __name__=='__main__':unittest.main()
