@@ -127,7 +127,8 @@ class Tests(unittest.TestCase):
   self.assertIn('조건·예외 0개',text);self.assertIn('검색 단계 근거 연결 미확보 문장: '+BAD,text)
  def test_research_format_network_and_unknown_holds_do_not_expose_prose_repair(self):
   for d in ({'reason':'TIMEOUT'},{'reason':'EVIDENCE_INCOMPLETE','ledger':{'state':'FORMAT'}},
-            {'reason':'EVIDENCE_INCOMPLETE','ledger':{'state':'COVERAGE'},'missing_criteria':'출처 URL 불일치'}):
+            {'reason':'EVIDENCE_INCOMPLETE','ledger':{'state':'COVERAGE'},'missing_criteria':'출처 URL 불일치'},
+            {'reason':'EVIDENCE_INCOMPLETE','ledger':{'state':'COVERAGE'},'research_claims_only':True,'stage':'근거 조사','missing_criteria':'검색 결과 밖의 출처 URL 불일치'}):
    self.assertFalse(repairable_diagnostic(d))
  def test_reported_research_hold_repair_preserves_upload_receipts_and_then_strictly_validates(self):
   helpers=base.Tests()

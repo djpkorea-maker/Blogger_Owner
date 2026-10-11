@@ -24,7 +24,7 @@ def repairable_diagnostic(detail):
     if detail.get('reason')=='EVIDENCE_ORIGINALS_INCOMPLETE':return True
     return (detail.get('reason')=='EVIDENCE_INCOMPLETE'
             and detail.get('ledger',{}).get('state')=='COVERAGE'
-            and (detail.get('research_claims_only') is True or
+            and (detail.get('research_claims_only') is True and detail.get('stage')=='본문 근거 연결 확인' or
                  detail.get('missing_criteria')=='조건·예외 근거 부족'))
 
 def paragraph_targets(content,diagnostic):
@@ -73,7 +73,8 @@ def paragraph_targets(content,diagnostic):
                             'stage':'최종 근거 문장 위치 확인','unverified_claims':deepcopy(claims),
                             'action':'현재 본문과 진단 문장을 대조하세요. 본문·이미지는 보존했습니다.'})
         for b,left,right in matches:
-            item=deepcopy(claim);item['text']=text if len(matches)==1 else compact(b['text'])[left:right]
+            offsets=[i for i,c in enumerate(b['text']) if not c.isspace()]
+            item=deepcopy(claim);item['text']=text if len(matches)==1 else b['text'][offsets[left]:offsets[right-1]+1]
             item['diagnostic_text']=text
             if excluded:item['excluded_caption']=excluded
             b['claims'].append(item)
