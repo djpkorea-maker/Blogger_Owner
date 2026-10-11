@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 from .sync import now, digest
 from .evidence import EvidenceHold, display_url, validate_pack
 from .sources import verify_origins, norm
+from .source_domains import registered_domain
 
 
 FACT_SCHEMA = json.loads(r'''{"type":"object","required":["facts"],"additionalProperties":false,"properties":{"facts":{"type":"array","items":{"type":"object","required":["id","text","source_ids","core","kind"],"additionalProperties":false,"properties":{"id":{"type":"string"},"text":{"type":"string"},"source_ids":{"type":"array","items":{"type":"string"}},"core":{"type":"boolean"},"kind":{"type":"string","enum":["core","practical","condition","other"]}}}}}}''')
@@ -47,9 +48,8 @@ def coverage(pack):
         checks.append({'url': display_url(original.get('final_url') or source['url']), 'state': state, 'reason': reason})
     domains = set()
     for sid in used:
-        try:host = urlsplit(originals[sid].get('final_url', '')).hostname
-        except ValueError:host = None
-        if host:domains.add('.'.join(host.split('.')[-2:]))
+        root=registered_domain(originals[sid].get('final_url',''))
+        if root:domains.add(root)
     return {'reason': 'GENERATION_EVIDENCE_COVERAGE', 'stage': '본문 작성용 근거 구성',
             'action': '실제 지원 출처와 부족한 주장에 대한 추가 조사 결과를 확인하세요.',
             'coverage': {'listed_sources': len(pack.get('sources', [])),

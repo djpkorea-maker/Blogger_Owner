@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from .google import public_fetch
 from .sync import digest,now
 from .evidence import EvidenceHold
+from .source_domains import registered_domain,DOMAIN_RULE_VERSION
 
 class Extract(HTMLParser):
     def __init__(self,html):
@@ -96,20 +97,27 @@ class SourceReader:
 def verify_origins(ai,pack,reader,progress=lambda *args:None,review_feedback=None):
     from .evidence import display_url
     originals={};supported=set();rejections={};verified=[];trusted=set();format_diagnostic={};format_trace=[]
+    claims_evaluated=False;failure_phase='ORIGINAL_ACCESS';independence={}
     def fail(message):
         diagnostic={'reason':'EVIDENCE_ORIGINALS_INCOMPLETE','summary':message,'stage':'근거 원문 확인','action':'아래 미검증 주장과 원문 접근 상태를 확인하세요. 미검증은 사실 오류 판정이 아닙니다.',
-            'unverified_claims':[{'text':f['text'],'reason':rejections.get(f['id'],'원문 검사에 이 주장에 대한 유효한 지원 판정이 없습니다.')} for f in pack['facts'] if f['id'] not in supported],
+            'unverified_claims':[{'text':f['text'],'reason':rejections.get(f['id'],'원문 검사에 이 주장에 대한 유효한 지원 판정이 없습니다.')} for f in pack['facts'] if f['id'] not in supported] if claims_evaluated else [],
+            'claims_evaluated':claims_evaluated,'failure_phase':failure_phase,
+            'source_independence':independence,
+            'verification_targets':[f['text'] for f in pack['facts']] if not claims_evaluated else [],
             'search_urls':[display_url(source['url']) for source in pack['sources']],
             'source_checks':[{'url':display_url(source['url']),'state':originals.get(source['id'],{}).get('status','NOT_CHECKED'),'reason':originals.get(source['id'],{}).get('reason','')} for source in pack['sources']]}
+        if not claims_evaluated:
+            diagnostic['action']='본문·이미지를 보존했습니다. 원문 접근과 A/B 등급·발행 주체·등록 도메인 판정을 확인한 뒤 출처 단계를 다시 검증하세요. 문장 보완은 개별 지원 판정 후 진행합니다.'
         diagnostic['verification_counts']={'listed_facts':len(pack['facts']),
-            'supported_facts':len(supported),'minimum_supported_facts':4,
-            'unverified_facts':len(pack['facts'])-len(supported),
+            'supported_facts':len(supported) if claims_evaluated else None,'minimum_supported_facts':4,
+            'unverified_facts':len(pack['facts'])-len(supported) if claims_evaluated else None,
+            'pending_facts':0 if claims_evaluated else len(pack['facts']),
             'core_facts':sum(f.get('core') is True for f in pack['facts']),
             'supported_core_facts':sum(f.get('core') is True and f['id'] in supported for f in pack['facts'])}
         urls={s['id']:display_url(s['url']) for s in pack['sources']}
         diagnostic['claim_checks']=[{'id':f['id'],'text':f['text'],
-            'state':'SUPPORTED' if f['id'] in supported else 'UNVERIFIED',
-            'reason':'' if f['id'] in supported else rejections.get(f['id'],'원문 검사에 이 주장에 대한 유효한 지원 판정이 없습니다.'),
+            'state':'SUPPORTED' if f['id'] in supported else 'UNVERIFIED' if claims_evaluated else 'NOT_EVALUATED',
+            'reason':'' if f['id'] in supported else rejections.get(f['id'],'원문 검사에 이 주장에 대한 유효한 지원 판정이 없습니다.') if claims_evaluated else '출처·접근·응답 형식 단계에서 종료하여 문장별 지원 판정을 아직 실시하지 않았습니다.',
             'source_urls':[urls[sid] for sid in f['source_ids'] if sid in urls]}
             for f in pack['facts']]
         diagnostic.update(format_diagnostic)
@@ -132,6 +140,7 @@ def verify_origins(ai,pack,reader,progress=lambda *args:None,review_feedback=Non
     usable={sid:value for sid,value in originals.items() if value['status']=='FETCHED'}
     if len(usable)<2:fail('직접 확인 가능한 원문 2개 미만')
     from .origin_response import request_review
+    failure_phase='REVIEW_FORMAT'
     context={'facts':pack['facts'],'sources':pack['sources'],'originals':usable}
     if review_feedback:context['previous_review_diagnostic']=review_feedback
     try:review,format_trace=request_review(ai,context,progress)
@@ -140,15 +149,28 @@ def verify_origins(ai,pack,reader,progress=lambda *args:None,review_feedback=Non
         fail(str(exc))
     source_reviews=review.get('sources');claims=review.get('claims')
     if not isinstance(source_reviews,list) or not isinstance(claims,list):fail('원문 검사 응답 형식 오류')
-    trusted=set();publishers=set();roots=set()
+    trusted=set();publishers=set();roots=set();assessments=[]
+    failure_phase='SOURCE_INDEPENDENCE'
+    urls={source['id']:source['url'] for source in pack['sources']}
     for item in source_reviews:
         if not isinstance(item,dict):continue
-        sid=item.get('source_id');publisher=item.get('publisher')
-        if sid in usable and item.get('grade') in ('A','B') and isinstance(publisher,str) and publisher.strip():
-            host=urlparse(usable[sid]['final_url']).hostname
-            if not host:continue
-            trusted.add(sid);publishers.add(norm(publisher).lower());roots.add('.'.join(host.split('.')[-2:]))
-    if len(trusted)<2 or len(publishers)<2 or len(roots)<2:fail('확인된 독립 출처 2개 미만')
+        sid=item.get('source_id');publisher=item.get('publisher');grade=item.get('grade')
+        if sid not in originals:continue
+        original=originals[sid]
+        root=registered_domain(original.get('final_url','')) if sid in usable else ''
+        publisher=norm(publisher) if isinstance(publisher,str) else ''
+        counted=sid in usable and grade in ('A','B') and bool(publisher) and bool(root)
+        assessments.append({'source_id':sid,'url':display_url(original.get('final_url') or urls[sid]),
+                            'registered_domain':root,'publisher':publisher or '미확인',
+                            'grade':grade,'counted':counted})
+        if counted:
+            trusted.add(sid);publishers.add(publisher.lower());roots.add(root)
+    independence={'trusted_sources':len(trusted),'publishers':len(publishers),
+                  'registered_domains':len(roots),'minimum':2,'domain_rule':DOMAIN_RULE_VERSION,
+                  'domains':sorted(roots),'sources':assessments,
+                  'missing':[label for label,count in [('A/B 원문',len(trusted)),('발행 주체',len(publishers)),('등록 도메인',len(roots))] if count<2]}
+    if independence['missing']:fail('확인된 독립 출처 2개 미만')
+    claims_evaluated=True;failure_phase='CLAIM_SUPPORT'
     fact_ids={f['id'] for f in pack['facts']};supported=set();verified=[]
     for claim in claims:
         if not isinstance(claim,dict):continue
@@ -164,7 +186,7 @@ def verify_origins(ai,pack,reader,progress=lambda *args:None,review_feedback=Non
         supported.add(fid);verified.append(claim)
     if any(f.get('core') is True and f['id'] not in supported for f in pack['facts']):fail('원문으로 지원되지 않는 핵심 사실')
     if len(supported)<4:fail('원문에서 확인된 사실 4개 미만')
-    pack['original_verification']={'checked_at':now(),'pack_hash':digest({'sources':pack['sources'],'facts':pack['facts']}),'originals':originals,'claims':verified,'trusted_sources':sorted(trusted),'response_format_attempts':format_trace}
+    pack['original_verification']={'checked_at':now(),'pack_hash':digest({'sources':pack['sources'],'facts':pack['facts']}),'originals':originals,'claims':verified,'trusted_sources':sorted(trusted),'response_format_attempts':format_trace,'source_independence':independence}
     return pack
 
 def require_originals(pack):
@@ -180,10 +202,9 @@ def require_originals(pack):
     for sid in trusted:
         original=originals.get(sid,{})
         if not isinstance(original,dict) or original.get('status')!='FETCHED' or not isinstance(original.get('text'),str) or original.get('text_hash')!=digest(original['text']):raise EvidenceHold('저장된 원문 변경 또는 손상')
-        try:host=urlparse(original.get('final_url','')).hostname
-        except ValueError:host=None
-        if not host:raise EvidenceHold('원문 주소 기록 오류')
-        roots.add('.'.join(host.split('.')[-2:]))
+        root=registered_domain(original.get('final_url',''))
+        if not root:raise EvidenceHold('원문 주소 기록 오류')
+        roots.add(root)
     if len(trusted)<2 or len(roots)<2:raise EvidenceHold('독립 원문 검사 기록 부족')
     facts={f['id']:f for f in pack['facts']};supported=set()
     for claim in claims:

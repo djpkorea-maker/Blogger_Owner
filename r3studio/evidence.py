@@ -274,8 +274,8 @@ def collect_cached(store,ai,title,topic,scope,progress=lambda *args:None,max_age
             except Exception as retry_error:
                 detail=deepcopy(getattr(retry_error,'diagnostic',None) or {})
                 # A transport/format failure must not be mislabeled as missing facts.
-                for key in ('unverified_claims','claim_checks','source_checks','search_urls','verification_counts'):
-                    detail.setdefault(key,deepcopy(error.diagnostic.get(key,[] if key!='verification_counts' else {})))
+                for key in ('unverified_claims','claim_checks','source_checks','search_urls','verification_counts','claims_evaluated','failure_phase','verification_targets','source_independence'):
+                    detail.setdefault(key,deepcopy(error.diagnostic.get(key,{} if key in ('verification_counts','source_independence') else [])))
                 detail.setdefault('summary',str(retry_error));detail.setdefault('stage','근거 원문 재검사')
                 detail['original_recheck']={'used':1,'limit':1,'state':'EXHAUSTED',
                     'same_originals':True,'body_changed':False}

@@ -66,12 +66,17 @@ def smoke_test():
     previous={k:os.environ.get(k) for k in environment_keys}
     root=None
     try:
+        from .source_domains import registered_domain
+        if (registered_domain('https://www.samsungsvc.co.kr/solution/147574')!='samsungsvc.co.kr'
+            or registered_domain('https://www.lge.co.kr/story/user-guide')!='lge.co.kr'
+            or registered_domain('https://one.blogspot.com/')!='one.blogspot.com'):
+            raise RuntimeError('오프라인 출처 도메인 판정 실패')
         with tempfile.TemporaryDirectory(prefix='r3-smoke-') as folder:
             for key in FIELDS:os.environ.pop(key,None)
             os.environ['LOCALAPPDATA']=folder
             root=tk.Tk();root.withdraw()
             app=App(root)
-            if 'Dev84 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
+            if 'Dev85 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
             root.update_idletasks() # No scheduled startup/network callbacks.
             if len(app.tabs.tabs())!=3:raise RuntimeError('세 메뉴 화면 구성 실패')
             if len(app.inspect_panes.panes())!=2:raise RuntimeError('목록·상세 조절 창 구성 실패')

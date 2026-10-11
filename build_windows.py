@@ -12,9 +12,13 @@ ROOT=Path(__file__).resolve().parent
 BUILD_REQUIREMENTS=ROOT/'requirements-build.txt'
 
 def build_commands(python=sys.executable):
+    from importlib.resources import files
+    snapshot=files('tldextract').joinpath('.tld_set_snapshot')
+    if not snapshot.is_file():raise RuntimeError('오프라인 도메인 판정 목록 누락')
     base=[python,'-m','PyInstaller','--noconfirm','--clean','--onedir',
           '--distpath',str(ROOT/'dist'),'--workpath',str(ROOT/'build'),
-          '--specpath',str(ROOT/'build'),'--paths',str(ROOT)]
+          '--specpath',str(ROOT/'build'),'--paths',str(ROOT),
+          '--add-data',str(snapshot)+';tldextract']
     return [base+['--windowed','--name','R3_Blogger_Studio',str(ROOT/'desktop_entry.py')],
             base+['--console','--name','R3_Blogger_Diagnostics',str(ROOT/'diagnose.py')]]
 

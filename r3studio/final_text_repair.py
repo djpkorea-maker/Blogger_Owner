@@ -108,6 +108,10 @@ def repair(service,pid):
     problem=deepcopy(p.get('error_diagnostic',{}))
     if problem.get('reason')!='EVIDENCE_ORIGINALS_INCOMPLETE':
         raise EvidenceHold('원문 근거 미확보 진단이 있어야 문장을 보완할 수 있습니다. 연결·형식 오류로 본문을 수정하지 않습니다.')
+    from .source_domains import claims_not_evaluated
+    if claims_not_evaluated(problem):
+        service.progress('출처 단계 재검증 · 본문·이미지 보존',0,1)
+        return service.validate(pid)
     content=p['proposed_content'];title=p.get('proposed_title',p['before']['title']);old_hash=signature(p)
     run={'at':now(),'state':'STARTED','limit':1,'before_hash':old_hash,
          'before_content':content,'before_length':body_metrics(content)['body_text_length'],

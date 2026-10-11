@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev84 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev85 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -282,7 +282,9 @@ class App:
         if result.get('replacement_job_id'):
             ttk.Button(replacement_controls,text='전체 교체 작업 이어서 진행',command=lambda:self.start_ai('replace_resume',{'proposal_id':pid}) if not self.busy else None).pack(side='left',padx=8)
         if result.get('mode')=='REPLACEMENT' and result.get('error_diagnostic',{}).get('reason')=='EVIDENCE_ORIGINALS_INCOMPLETE':
-            ttk.Button(replacement_controls,text='근거 미확보 문장 보완',command=lambda:self.start_ai('repair_evidence',{'proposal_id':pid}) if not self.busy else None).pack(side='left',padx=8)
+            from .source_domains import claims_not_evaluated
+            repair_label='출처 단계 재검증 · 본문 보존' if claims_not_evaluated(result.get('error_diagnostic',{})) else '근거 미확보 문장 보완'
+            ttk.Button(replacement_controls,text=repair_label,command=lambda:self.start_ai('repair_evidence',{'proposal_id':pid}) if not self.busy else None).pack(side='left',padx=8)
         ttk.Button(replacement_controls,text='수정안 최종 검증',state='disabled' if result.get('mode')=='REPLACEMENT' and not result.get('replacement_preview_ready') else 'normal',command=lambda:self.start_ai('repair_validate',{'proposal_id':pid,'slot':1}) if not self.busy else None).pack(side='right')
         title=result.get('proposed_title') or result.get('plan',{}).get('proposal',{}).get('title') or ('아직 생성되지 않음' if result.get('mode')=='REPLACEMENT' else result['before'].get('title',''))
         requested='\n입력한 새 제목: '+result.get('replacement_topic','') if result.get('mode')=='REPLACEMENT' else ''

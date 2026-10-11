@@ -138,12 +138,27 @@ def diagnostic_lines(detail):
         from .text_flow import review_lines
         lines.extend(review_lines(detail['text_review']))
     checked=detail.get('verification_counts',{})
-    if checked:
+    from .source_domains import claims_not_evaluated
+    pending=claims_not_evaluated(detail)
+    if checked and pending:
+        lines.append('문장별 지원 판정: 미실시 · 출처·접근·응답 형식 단계에서 종료')
+        lines.append('검증 대기 문장: '+str(checked.get('pending_facts',checked.get('listed_facts','미확인')))+'개 · 지원 0개 판정이 아닙니다.')
+    elif checked:
         lines.append('원문 근거 판정: 장부 '+str(checked.get('listed_facts','미확인'))+
             '개 / 지원 확인 '+str(checked.get('supported_facts','미확인'))+
             '개 / 프로그램 기준 '+str(checked.get('minimum_supported_facts',4))+
             '개 / 미검증 '+str(checked.get('unverified_facts','미확인'))+'개')
         lines.append('이 개수는 프로그램 내부 기준이며 승인 여부나 사실 오류 판정이 아닙니다.')
+    independence=detail.get('source_independence',{})
+    if independence:
+        lines.append('독립 출처 검사: A/B 원문 '+str(independence.get('trusted_sources',0))+
+            '개 / 발행 주체 '+str(independence.get('publishers',0))+
+            '개 / 등록 도메인 '+str(independence.get('registered_domains',0))+'개 · 각각 최소 2개')
+        if independence.get('missing'):lines.append('부족한 출처 조건: '+' / '.join(independence['missing']))
+        for source in independence.get('sources',[]):
+            lines.append('출처 판정: '+source['url']+' / '+source['grade']+' / '+source['publisher']+
+                ' / 등록 도메인 '+(source['registered_domain'] or '확인 불가')+
+                (' / 계산에 포함' if source.get('counted') else ' / A/B 원문·발행 주체·주소 확인 필요'))
     retry=detail.get('original_recheck',{})
     if retry:
         lines.append('같은 원문 대조 재검사: '+str(retry.get('used',0))+
@@ -175,14 +190,15 @@ def diagnostic_lines(detail):
         if 'linked_facts' in ledger:lines.append(f'AI 장부의 근거 연결 사실 {ledger["linked_facts"]}개 / 핵심 분류 {ledger["core_facts"]}개 · 원문 검증 통과와 별도')
         lines.extend('• '+issue for issue in ledger.get('issues',[]))
         lines.extend('장부 사실: '+f['text']+' / 핵심 분류: '+str(f.get('core'))+' / 유형: '+str(f.get('kind')) for f in ledger.get('facts',[]))
-    for claim in detail.get('unverified_claims',[]):
+    for claim in ([] if pending else detail.get('unverified_claims',[])):
         lines.append('근거 미확보 주장: '+claim['text']+' / '+claim['reason'])
         checked_claim=next((c for c in detail.get('claim_checks',[]) if c.get('text')==claim['text']),{})
         if checked_claim.get('source_urls'):
             lines.append('이 주장에 연결된 원문: '+' / '.join(checked_claim['source_urls']))
-    if detail.get('verification_targets') and not detail.get('unverified_claims'):
+    targets=detail.get('verification_targets') or ([c.get('text','') for c in detail.get('unverified_claims',[])] if pending else [])
+    if targets and (pending or not detail.get('unverified_claims')):
         lines.append('검증 대상으로 전달한 본문 문장 · 개별 근거 판정 미완료:')
-        lines.extend('• '+text for text in detail['verification_targets'])
+        lines.extend('• '+text for text in targets)
     for key,label in [('existing_urls','본문의 기존 링크'),('search_urls','실제 검색 출처'),('unmatched_urls','AI가 제시한 불일치 출처')]:
         if detail.get(key):
             lines.append(label+' · 표시에서는 주소의 질의값·앵커 제외:')
