@@ -56,7 +56,8 @@ class Tests(unittest.TestCase):
         service.save(pid,p)
         # Exercise real Bridge image uploads before the factual HOLD. Later
         # repair and final validation must reuse both saved DONE receipts.
-        error=EvidenceHold('원문 근거 확인 필요',diagnostic=base.diagnostic(),partial_pack=p['final_evidence_pack'])
+        error=EvidenceHold('원문 근거 확인 필요',diagnostic=base.diagnostic())
+        error.partial_pack=p['final_evidence_pack']
         with patch('r3studio.repair_images.collect_cached',side_effect=error):
             held=service.validate(pid)
         self.assertEqual(held['status'],'HOLD');self.assertEqual(len(server.uploads),2)
