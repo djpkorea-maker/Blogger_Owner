@@ -288,7 +288,7 @@ def review_lines(review):
 
 def report(proposal):
     lines=['생성 작업 번호: '+str(proposal.get('replacement_job_id','')),
-        '현재 단계: '+proposal.get('replacement_stage','확인 필요'),
+        '현재 단계: '+(proposal.get('validation_stage') or proposal.get('replacement_stage','확인 필요')),
         '안내: '+proposal.get('reason','확인 필요'),
         '본문 검사와 이미지·링크·최종 검사를 구분합니다. Blogger 글은 아직 적용하지 않았습니다.','']
     diagnostic=proposal.get('error_diagnostic',{})
@@ -309,6 +309,15 @@ def report(proposal):
         lines.append('\n작업 중단 원인: '+diagnostic.get('summary','확인 필요'))
         for key,label in [('reason','오류 분류'),('stage','중단 단계'),('http_status','HTTP 오류'),('model','사용 모델'),('action','다음 조치')]:
             if diagnostic.get(key) is not None:lines.append(label+': '+str(diagnostic[key]))
+        from .presentation import diagnostic_lines as evidence_lines
+        detail={k:v for k,v in diagnostic.items() if k not in ('text_review','fact_search_attempts','image_generation_started')}
+        lines.extend(evidence_lines(detail))
+        if (diagnostic.get('reason')=='EVIDENCE_ORIGINALS_INCOMPLETE'
+                and not diagnostic.get('unverified_claims')):
+            lines.append('이전 기록에 문장별 미검증 항목이 없습니다. 보존된 본문으로 최종 검증을 다시 실행하면 상세 근거 판정을 기록합니다.')
+    for attempt in proposal.get('final_evidence_attempts',[]):
+        labels={'STARTED':'원문 대조 시작','HOLD':'보류','VERIFIED':'원문 대조 통과'}
+        lines.append('최종 근거 검사 '+str(attempt.get('attempt',''))+'차: '+labels.get(attempt.get('state'),attempt.get('state','확인 필요')))
     binding=proposal.get('reference_bindings',{})
     if binding.get('references'):
         lines.append('\n본문에 실제 연결한 참고 자료')

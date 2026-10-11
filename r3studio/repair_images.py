@@ -134,6 +134,8 @@ class RepairImages:
         title=p.get('proposed_title',p['before']['title']);base_url=p.get('site_url') or p['before'].get('url','')
         self.save(pid,p) # Revoke old PASS before any external call.
         p.pop('error_diagnostic',None)
+        p['validation_stage']='이미지 업로드 결과 확인'
+        self.save(pid,p)
         try:
             if p.get('mode')=='REPLACEMENT':
                 import re
@@ -168,13 +170,21 @@ class RepairImages:
                 content=replace_slot(content,slot,choice['expected_url'],candidate,receipt)
             p['validation_content']=content
             self.progress('수정된 본문 근거 최종 재검증',0,1)
-            before=p['before'];pack=collect_cached(self.store,self.ai,title,title,self.adapter.blog_id+':image-repair:'+str(pid)+':'+digest(content),self.progress,article=content)
+            p['validation_stage']='수정된 본문 근거 최종 재검증'
+            self.save(pid,p)
+            def record_evidence(event):
+                p.setdefault('final_evidence_attempts',[]).append(dict(event,at=now(),article_hash=digest(content)))
+                p['final_evidence_attempts']=p['final_evidence_attempts'][-20:]
+                self.save(pid,p)
+            before=p['before'];pack=collect_cached(self.store,self.ai,title,title,self.adapter.blog_id+':image-repair:'+str(pid)+':'+digest(content),self.progress,article=content,recheck_originals=True,record_review=record_evidence)
             corpus=[dict(r) for r in self.store.db.execute('SELECT post_id,title,content,url,status FROM posts WHERE blog_id=? AND present=1',(self.adapter.blog_id,))]
             peers=[r for r in corpus if r['status']=='LIVE' and r['post_id']!=str(before['id'])]
             from .article_policy import generated_fast,VERSION as ARTICLE_POLICY
             checker=generated_fast if p.get('mode')=='REPLACEMENT' else fast_check
             fast=asdict(checker(dict(before,title=title,content=content,url=base_url),peers))
             if fast['issues']:raise ImageHold('수정안 형식 검사 보류: '+' / '.join(fast['issues']))
+            p['validation_stage']='본문 사실·안전·품질 검사'
+            self.save(pid,p)
             self.progress('본문 사실·안전·품질 검사',0,1)
             from .fact_search import collect
             def record_fact(attempts):
@@ -184,6 +194,8 @@ class RepairImages:
                 stage='수정안 최종 독립 Fact 검색',image_generation_started=p.get('mode')=='REPLACEMENT')
             deep=evaluate(self.ai,dict(before,title=title,content=content,independent_fact_search=audit),pack,fast)
             if not deep.get('text_verified'):raise ImageHold('수정안 본문 최종 품질 미통과')
+            p['validation_stage']='공개 이미지 최종 관련성·ALT 검사'
+            self.save(pid,p)
             self.progress('공개 이미지 최종 관련성·ALT 검사',0,1)
             checked=check_public_images(self.store,self.ai,title,content,self.cache,self.adapter.blog_id,str(before['id']),download)
             if len(checked)!=2:raise ImageHold('검증된 이미지 2장 필요')
@@ -191,11 +203,14 @@ class RepairImages:
                 from .finalize import decide
                 final_payload={'title':title,'composed_content':content,'search_description':p.get('search_description',''),'labels':before.get('labels',[]),'evidence':pack,'independent_fact_search':audit,'final_fact_article_hash':digest({'title':title,'content':content}),'reference_bindings':p.get('reference_bindings')}
                 p['replacement_final']=decide(self.ai,final_payload,[r for r in corpus if r['post_id']!=str(before['id'])],base_url,checked,fetch or public_fetch)
+            p['validation_stage']='링크·최종 적용 조건 검사'
+            self.save(pid,p)
             links=check_links(content,base_url,corpus,pack,fetch or public_fetch)
             self.baseline(p);plan=Apply(self.store,self.adapter).prepare(str(before['id']),title,content,before.get('labels',[]))
             if plan['expected_hash']!=p['expected_hash'] or plan['expected_updated']!=before['updated'] or plan['expected_url']!=before.get('url',''):raise ImageHold('검증 중 LIVE 변경: 적용 중지')
             p.update(plan=plan,proposal_hash=digest(plan['proposal']),corpus_hash=corpus_hash(corpus),evidence=pack,deep=deep,images=checked,links=links,reason='수정안 전체 검증 통과 · 검토 후 적용 가능')
             p.pop('error_diagnostic',None)
+            p['validation_stage']='수정안 전체 검증 완료'
             return self.save(pid,p,'PASS',invalidate=False)
         except Cancelled:raise
         except Exception as exc:

@@ -426,3 +426,12 @@ Dev81 retained a request ID before sending an upload and blocked every non-DONE 
 
 Final-validation HOLD is recorded with its reason rather than as a completed validation. Allowlisted server errors identify read-only deployment, disabled writes, authentication, busy Bridge, and sharing failures without persisting arbitrary remote text. Existing body, two candidates, request IDs, receipts, settings and database are preserved. The article policy remains 0.81 because its content rules have not changed. User-PC/account completion remains unverified until exercised with the actual setup.
 
+
+
+# Dev83: final evidence diagnostics and one original recheck
+
+Final validation already saved image upload receipts before running the original evidence gate, but the replacement report omitted unverified claims and source access results. The report now includes the evidence counts, exact ledger claim text and rejection reason, source checks, and final-validation stage instead of the stale image-generation stage. Historical summary-only records explicitly say the details are unavailable.
+
+Final validation may retry original review once using the same fetched, hash-checked originals and unchanged facts/source bindings. It does not search for new facts, alter prose, regenerate images, bypass the four-fact/core/independent-source checks, or write the post. Failed verification stays HOLD with per-claim diagnostics; only verified packs enter the evidence cache. Previously accepted local candidates, request IDs, upload receipts and the baseline Blogger post are preserved.
+
+Mock regressions exercise real Bridge client uploads followed by original-review failure, persisted diagnostics, exact-body preservation and resumed validation without duplicate uploads. Windows build and runner UI smoke results must be checked before distributing this artifact. Real Gemini and the user's end-to-end account workflow remain unverified.

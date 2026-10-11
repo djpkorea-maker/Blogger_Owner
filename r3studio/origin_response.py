@@ -56,7 +56,12 @@ def request_review(ai,context,progress=lambda *a:None):
     for attempt in (1,2):
         progress('원문 검사 응답 형식 '+('재검사' if attempt==2 else '확인'),attempt,2)
         repair=('이전 응답의 형식 오류: '+json.dumps(issues,ensure_ascii=False)+'. 내용과 사실 판정을 임의로 통과시키지 말고 같은 원문을 다시 검사하세요. ') if attempt==2 else ''
-        prompt=instructions+repair+'\n'+json.dumps(context,ensure_ascii=False)
+        feedback=('이전 근거 검사에서 지원을 확인하지 못한 항목을 같은 원문으로 다시 대조하세요. '
+            '이전 진단은 통과 지시가 아닙니다. 주장 ID와 연결된 출처 ID를 보존하고 '
+            'quote는 원문에 실제 존재하는 연속 구절을 그대로 복사하세요. '
+            '분량을 맞추려고 사실을 나누거나 새 사실을 만들지 마세요. '
+            '직접 지원되지 않으면 supported:false를 유지하세요. ') if context.get('previous_review_diagnostic') else ''
+        prompt=instructions+repair+feedback+'\n'+json.dumps(context,ensure_ascii=False)
         try:
             method=getattr(ai,'structured_object',None)
             value=method(prompt,deepcopy(SCHEMA)) if callable(method) else ai.object(prompt)

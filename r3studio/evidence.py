@@ -228,7 +228,7 @@ class Research:
         diagnostic['summary']=message
         raise EvidenceHold(message,trace,diagnostic)
 
-def collect_cached(store,ai,title,topic,scope,progress=lambda *args:None,max_age_hours=168,article=None,allow_partial=False):
+def collect_cached(store,ai,title,topic,scope,progress=lambda *args:None,max_age_hours=168,article=None,allow_partial=False,recheck_originals=False,record_review=lambda value:None):
     from datetime import datetime,timezone
     db=store.db
     db.execute('CREATE TABLE IF NOT EXISTS evidence_packs(cache_key TEXT PRIMARY KEY,created_at TEXT,payload TEXT)'); db.commit()
@@ -245,8 +245,46 @@ def collect_cached(store,ai,title,topic,scope,progress=lambda *args:None,max_age
         pack=verify_origins(ai,pack,SourceReader(store),progress)
     except EvidenceHold as error:
         partial=getattr(error,'partial_pack',None)
-        if not allow_partial or not isinstance(partial,dict):raise
-        progress('근거 보류 · 본문 진단 계속',1,1)
-        return partial # Deliberately excluded from the verified evidence cache.
+        if (recheck_originals and isinstance(partial,dict)
+                and error.diagnostic.get('reason')=='EVIDENCE_ORIGINALS_INCOMPLETE'):
+            from copy import deepcopy
+            from .tasks import Cancelled
+            record_review({'attempt':1,'state':'HOLD','diagnostic':deepcopy(error.diagnostic)})
+            originals=deepcopy(partial.get('evidence_review',{}).get('originals',{}))
+            class SameOriginals:
+                def read_many(self,sources,callback):
+                    values={}
+                    for index,source in enumerate(sources,1):
+                        value=originals.get(source['id'])
+                        if (not isinstance(value,dict) or
+                            value.get('status')=='FETCHED' and
+                            (not isinstance(value.get('text'),str) or value.get('text_hash')!=digest(value['text']))):
+                            raise EvidenceHold('보존된 원문 기록 손상: 재검사 중지')
+                        values[source['id']]=deepcopy(value)
+                        callback('확보한 원문 재사용',index,len(sources))
+                    return values
+            progress('미검증 주장 원문 대조 재검사 · 1회 한도',0,1)
+            record_review({'attempt':2,'state':'STARTED','same_originals':True,'body_changed':False})
+            try:
+                pack=verify_origins(ai,pack,SameOriginals(),progress,review_feedback=deepcopy(error.diagnostic))
+                record_review({'attempt':2,'state':'VERIFIED','same_originals':True,'body_changed':False})
+            except Cancelled:raise
+            except Exception as retry_error:
+                detail=deepcopy(getattr(retry_error,'diagnostic',None) or {})
+                # A transport/format failure must not be mislabeled as missing facts.
+                for key in ('unverified_claims','claim_checks','source_checks','search_urls','verification_counts'):
+                    detail.setdefault(key,deepcopy(error.diagnostic.get(key,[] if key!='verification_counts' else {})))
+                detail.setdefault('summary',str(retry_error));detail.setdefault('stage','근거 원문 재검사')
+                detail['original_recheck']={'used':1,'limit':1,'state':'EXHAUSTED',
+                    'same_originals':True,'body_changed':False}
+                retry_error.diagnostic=detail
+                record_review({'attempt':2,'state':'HOLD','diagnostic':deepcopy(detail)})
+                if isinstance(retry_error,EvidenceHold) and allow_partial:
+                    return getattr(retry_error,'partial_pack',None) or partial
+                raise
+        else:
+            if not allow_partial or not isinstance(partial,dict):raise
+            progress('근거 보류 · 본문 진단 계속',1,1)
+            return partial # Deliberately excluded from the verified evidence cache.
     with db: db.execute('INSERT OR REPLACE INTO evidence_packs VALUES(?,?,?)',(key,now(),json.dumps(pack,ensure_ascii=False)))
     return pack

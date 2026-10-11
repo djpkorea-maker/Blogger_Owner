@@ -93,14 +93,25 @@ class SourceReader:
         with self.store.db:self.store.db.execute('INSERT OR REPLACE INTO source_originals VALUES(?,?,?,?)',(url,now(),result['status'],json.dumps(result,ensure_ascii=False)))
         return result
 
-def verify_origins(ai,pack,reader,progress=lambda *args:None):
+def verify_origins(ai,pack,reader,progress=lambda *args:None,review_feedback=None):
     from .evidence import display_url
     originals={};supported=set();rejections={};verified=[];trusted=set();format_diagnostic={};format_trace=[]
     def fail(message):
         diagnostic={'reason':'EVIDENCE_ORIGINALS_INCOMPLETE','summary':message,'stage':'근거 원문 확인','action':'아래 미검증 주장과 원문 접근 상태를 확인하세요. 미검증은 사실 오류 판정이 아닙니다.',
-            'unverified_claims':[{'text':f['text'],'reason':rejections.get(f['id'],message)} for f in pack['facts'] if f['id'] not in supported],
+            'unverified_claims':[{'text':f['text'],'reason':rejections.get(f['id'],'원문 검사에 이 주장에 대한 유효한 지원 판정이 없습니다.')} for f in pack['facts'] if f['id'] not in supported],
             'search_urls':[display_url(source['url']) for source in pack['sources']],
             'source_checks':[{'url':display_url(source['url']),'state':originals.get(source['id'],{}).get('status','NOT_CHECKED'),'reason':originals.get(source['id'],{}).get('reason','')} for source in pack['sources']]}
+        diagnostic['verification_counts']={'listed_facts':len(pack['facts']),
+            'supported_facts':len(supported),'minimum_supported_facts':4,
+            'unverified_facts':len(pack['facts'])-len(supported),
+            'core_facts':sum(f.get('core') is True for f in pack['facts']),
+            'supported_core_facts':sum(f.get('core') is True and f['id'] in supported for f in pack['facts'])}
+        urls={s['id']:display_url(s['url']) for s in pack['sources']}
+        diagnostic['claim_checks']=[{'id':f['id'],'text':f['text'],
+            'state':'SUPPORTED' if f['id'] in supported else 'UNVERIFIED',
+            'reason':'' if f['id'] in supported else rejections.get(f['id'],'원문 검사에 이 주장에 대한 유효한 지원 판정이 없습니다.'),
+            'source_urls':[urls[sid] for sid in f['source_ids'] if sid in urls]}
+            for f in pack['facts']]
         diagnostic.update(format_diagnostic)
         if format_trace:diagnostic['response_format_attempts']=format_trace
         error=EvidenceHold(message,diagnostic=diagnostic)
@@ -121,7 +132,9 @@ def verify_origins(ai,pack,reader,progress=lambda *args:None):
     usable={sid:value for sid,value in originals.items() if value['status']=='FETCHED'}
     if len(usable)<2:fail('직접 확인 가능한 원문 2개 미만')
     from .origin_response import request_review
-    try:review,format_trace=request_review(ai,{'facts':pack['facts'],'sources':pack['sources'],'originals':usable},progress)
+    context={'facts':pack['facts'],'sources':pack['sources'],'originals':usable}
+    if review_feedback:context['previous_review_diagnostic']=review_feedback
+    try:review,format_trace=request_review(ai,context,progress)
     except EvidenceHold as exc:
         format_diagnostic=exc.diagnostic
         fail(str(exc))
@@ -146,7 +159,8 @@ def verify_origins(ai,pack,reader,progress=lambda *args:None):
         if not 10<=len(norm(quote))<=250 or norm(quote) not in usable[sid]['text']:
             rejections[fid]='제시된 인용 구절이 실제 추출 원문과 일치하지 않음';continue
         fact=next(f for f in pack['facts'] if f['id']==fid)
-        if sid not in fact['source_ids']:continue
+        if sid not in fact['source_ids']:
+            rejections[fid]='원문 검사 출처 ID가 이 주장에 연결된 출처 ID와 다릅니다.';continue
         supported.add(fid);verified.append(claim)
     if any(f.get('core') is True and f['id'] not in supported for f in pack['facts']):fail('원문으로 지원되지 않는 핵심 사실')
     if len(supported)<4:fail('원문에서 확인된 사실 4개 미만')

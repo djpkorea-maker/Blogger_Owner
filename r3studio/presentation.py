@@ -137,6 +137,17 @@ def diagnostic_lines(detail):
     if detail.get('text_review'):
         from .text_flow import review_lines
         lines.extend(review_lines(detail['text_review']))
+    checked=detail.get('verification_counts',{})
+    if checked:
+        lines.append('원문 근거 판정: 장부 '+str(checked.get('listed_facts','미확인'))+
+            '개 / 지원 확인 '+str(checked.get('supported_facts','미확인'))+
+            '개 / 프로그램 기준 '+str(checked.get('minimum_supported_facts',4))+
+            '개 / 미검증 '+str(checked.get('unverified_facts','미확인'))+'개')
+        lines.append('이 개수는 프로그램 내부 기준이며 승인 여부나 사실 오류 판정이 아닙니다.')
+    retry=detail.get('original_recheck',{})
+    if retry:
+        lines.append('같은 원문 대조 재검사: '+str(retry.get('used',0))+
+            '/'+str(retry.get('limit',1))+'회 · '+retry.get('state','확인 필요')+' · 본문·이미지 보존')
     counts=detail.get('coverage',{})
     if counts:
         lines.append(f"본문 작성용 실제 근거: 목록 {counts['listed_sources']}개 / 원문 확보 {counts['fetched_sources']}개 / 지원 연결 {counts['used_sources']}개 / 독립 도메인 {counts['used_domains']}개")
@@ -166,6 +177,9 @@ def diagnostic_lines(detail):
         lines.extend('장부 사실: '+f['text']+' / 핵심 분류: '+str(f.get('core'))+' / 유형: '+str(f.get('kind')) for f in ledger.get('facts',[]))
     for claim in detail.get('unverified_claims',[]):
         lines.append('근거 미확보 주장: '+claim['text']+' / '+claim['reason'])
+        checked_claim=next((c for c in detail.get('claim_checks',[]) if c.get('text')==claim['text']),{})
+        if checked_claim.get('source_urls'):
+            lines.append('이 주장에 연결된 원문: '+' / '.join(checked_claim['source_urls']))
     if detail.get('verification_targets') and not detail.get('unverified_claims'):
         lines.append('검증 대상으로 전달한 본문 문장 · 개별 근거 판정 미완료:')
         lines.extend('• '+text for text in detail['verification_targets'])
