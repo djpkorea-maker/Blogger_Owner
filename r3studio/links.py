@@ -4,6 +4,7 @@ import json
 from urllib.parse import urlparse,urljoin,urldefrag
 from .gates import Document
 from .google import public_fetch
+from .sync import digest
 
 class LinkHold(RuntimeError):pass
 
@@ -30,16 +31,38 @@ def inspect_link_access(content,base_url,fetch=public_fetch,checkpoint=lambda:No
 
 def normalized(url):return urldefrag(url)[0]
 
-def append_verified_candidates(ai,title,content,live_posts,evidence):
+def append_verified_candidates(ai,title,content,live_posts,evidence,strict=False,record=lambda value:None):
+    from .article_policy import strip_auxiliary,body_text,VERSION
+    content=strip_auxiliary(content)
     candidates=[{'id':p['post_id'],'title':p['title'],'url':p['url']} for p in live_posts if p.get('status')=='LIVE' and p.get('url')]
     if not candidates:raise LinkHold('연결 가능한 LIVE 글이 없습니다.')
-    choice=ai.object('제목과 본문을 읽고 독자에게 실제로 도움이 되는 관련 LIVE 글을 1~3개 선택하세요. ids:[정확한 Post ID]. 관련 글이 없으면 빈 배열. 후보에 없는 ID를 생성하지 마세요.\n'+json.dumps({'title':title,'article':content,'candidates':candidates},ensure_ascii=False))
-    ids=choice.get('ids');lookup={p['id']:p for p in candidates}
-    if not isinstance(ids,list) or not 1<=len(ids)<=3 or len(set(ids))!=len(ids) or any(i not in lookup for i in ids):raise LinkHold('관련 LIVE 링크 선택 미통과')
+    request={'title':title,'article':content,'candidates':candidates}
+    prompt='제목과 본문을 읽고 독자에게 실제로 도움이 되는 관련 LIVE 글을 1~3개 선택하세요. ids:[정확한 Post ID]. 관련 글이 없으면 빈 배열. 후보에 없는 ID를 생성하지 마세요.'
+    if strict:
+        from .references import candidates as original_candidates
+        request['verified_sources']=original_candidates(evidence)
+        request['verified_facts']=evidence['facts']
+        request['verified_claims']=evidence['original_verification']['claims']
+        prompt+=' references:[{source_id:제공된 출처 ID,fact_id:해당 원문으로 검증된 사실 ID,excerpt:본문의 연속 구절 그대로}]도 반환하세요. 본문에 실제 쓰인 주장과 직접 연결되는 자료 1~4개만 고르세요. 출처와 사실 ID의 연결은 verified_claims에 있어야 합니다. 모든 출처를 붙이지 마세요. URL·출처 제목·근거 개수용 자료를 만들지 마세요. 영상은 필수가 아니며 실제 본문 설명을 직접 뒷받침할 때만 연결하세요.'
+    choice=ai.object(prompt+'\n'+json.dumps(request,ensure_ascii=False))
+    ids=choice.get('ids') if isinstance(choice,dict) else None;lookup={p['id']:p for p in candidates}
+    if not isinstance(ids,list) or not 1<=len(ids)<=3 or any(not isinstance(i,str) for i in ids) or len(set(ids))!=len(ids) or any(i not in lookup for i in ids):raise LinkHold('관련 LIVE 링크 선택 미통과')
     links=''.join('<li><a href="'+html.escape(lookup[i]['url'],quote=True)+'">'+html.escape(lookup[i]['title'])+'</a></li>' for i in ids)
-    sources=evidence.get('sources',[])
-    refs=''.join('<li><a href="'+html.escape(s['url'],quote=True)+'">'+html.escape(s.get('title') or s.get('reason') or '근거 자료 '+str(index+1))+'</a></li>' for index,s in enumerate(sources) if s.get('grade') in ('A','B'))
-    return content+'<h2>함께 읽으면 도움이 되는 글</h2><ul>'+links+'</ul><h2>참고 자료</h2><ul>'+refs+'</ul>'
+    if strict:
+        from .references import select,reference_html
+        from .evidence import EvidenceHold
+        try:selected=select(choice,content,evidence)
+        except EvidenceHold as first:
+            # One ledger-only format/binding correction with the same article
+            # and originals. It is not another search or a truth certification.
+            answer=ai.object('R3 REFERENCE BINDING REPAIR: '+prompt+' 이전 응답의 잘못된 연결만 고치세요.\n'+json.dumps({**request,'previous':choice,'error':str(first)},ensure_ascii=False))
+            selected=select(answer,content,evidence)
+        record({'policy':VERSION,'body_hash':digest(body_text(content)),'references':selected})
+        refs=reference_html(selected)
+    else:
+        sources=evidence.get('sources',[])
+        refs='<section data-r3-kind="references"><h2>참고 자료</h2><ul>'+''.join('<li><a href="'+html.escape(s['url'],quote=True)+'">'+html.escape(urlparse(s['url']).hostname or s['url'])+'</a></li>' for s in sources if s.get('grade') in ('A','B'))+'</ul></section>'
+    return content+'<section data-r3-kind="related"><h2>함께 읽으면 도움이 되는 글</h2><ul>'+links+'</ul></section>'+refs
 
 def check_links(content,base_url,live_posts,evidence,fetch=public_fetch):
     own_host=urlparse(base_url).hostname

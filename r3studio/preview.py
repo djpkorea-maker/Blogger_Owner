@@ -83,7 +83,9 @@ def show_article_comparison(dialog,panes,original,proposed,reviews,cache_dir,dow
         ttk.Label(frame,text=label,font=('',13,'bold')).pack(anchor='w')
         parts=preview_parts(content,reviews,proposed=bool(side),choices=choices);parts_by_side.append(parts)
         count=sum(part['kind']=='image' for part in parts)
-        ttk.Label(frame,text=f'본문 이미지 {count}개 · ALT와 그림 설명을 아래에서 확인하세요.').pack(anchor='w')
+        from .article_policy import body_metrics
+        metrics=body_metrics(content)
+        ttk.Label(frame,text=f"설명 본문 {metrics['body_text_length']}자 · 이미지 {count}개 · 그림 설명·참고 목록·관련 글 제외").pack(anchor='w')
         text=ScrolledText(frame,wrap='word',width=45);text.pack(fill='both',expand=True);widgets.append(text)
         text.tag_configure('image_meta',foreground='#24527a')
         text.tag_configure('pending',foreground='#995500')

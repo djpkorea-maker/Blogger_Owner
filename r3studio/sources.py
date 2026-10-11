@@ -80,7 +80,13 @@ class SourceReader:
             if 'image/' in ctype:raise EvidenceHold('이미지 원문: 텍스트 추출 불가')
             text=pdf_text(response.get('body_bytes')) if 'pdf' in ctype or response.get('body_bytes',b'').startswith(b'%PDF-') else (norm(''.join(Extract(response['body']).text)) if 'html' in ctype or re.search(r'<(?:html|p|div|article|h[1-6])\b',response['body'][:1000],re.I) else norm(response['body']))
             if len(text)<100:raise EvidenceHold('원문 본문 부족 또는 로그인 화면')
-            result.update(status='FETCHED',extract_version=64,final_url=response['url'],text=text[:50000],text_hash=digest(text[:50000]),full_text_hash=digest(text),truncated=len(text)>50000)
+            title=''
+            if 'html' in ctype:
+                match=re.search(r'<title\b[^>]*>([\s\S]*?)</title>',response['body'],re.I)
+                if match:
+                    import html
+                    title=norm(html.unescape(re.sub(r'<[^>]+>',' ',match.group(1))))[:180]
+            result.update(document_title=title,status='FETCHED',extract_version=64,final_url=response['url'],text=text[:50000],text_hash=digest(text[:50000]),full_text_hash=digest(text),truncated=len(text)>50000)
         except EvidenceHold as exc:result['reason']=str(exc)
         except TimeoutError:result['reason']='원문 요청 시간 초과 (20초)'
         except (OSError,ValueError,PyPdfError):result['reason']='원문 네트워크 오류 또는 문서 파싱 실패'

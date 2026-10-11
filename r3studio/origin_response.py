@@ -51,6 +51,8 @@ def request_review(ai,context,progress=lambda *a:None):
         'claims와 sources는 반드시 최상위 배열입니다. 모든 제공된 주장과 확인 가능한 원문을 판정하세요. '
         '지원하지 않는 주장도 supported:false와 확인한 source_id로 반환하고 인용할 구절이 없으면 quote는 빈 문자열로 쓰세요. '
         'ID는 입력 문자열 그대로 복사하고 숫자로 바꾸지 마세요. supported는 문자열이 아닌 JSON true/false입니다. ')
+    from .article_policy import BOUNDARY_RULES
+    instructions+=BOUNDARY_RULES
     for attempt in (1,2):
         progress('원문 검사 응답 형식 '+('재검사' if attempt==2 else '확인'),attempt,2)
         repair=('이전 응답의 형식 오류: '+json.dumps(issues,ensure_ascii=False)+'. 내용과 사실 판정을 임의로 통과시키지 말고 같은 원문을 다시 검사하세요. ') if attempt==2 else ''

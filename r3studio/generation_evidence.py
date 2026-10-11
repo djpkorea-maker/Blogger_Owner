@@ -4,6 +4,7 @@ from copy import deepcopy
 from .evidence import EvidenceHold, validate_pack
 from .sources import require_originals, verify_origins
 from .sync import digest, now
+from .article_policy import BOUNDARY_RULES
 
 
 def writer_context(title, topic, pack):
@@ -81,7 +82,8 @@ def prepare(ai, pack, reader, title, topic, progress=lambda *a: None,
                 '모터·센서 내부 동작, 고장 원인, 수치, 모델 공통 규칙을 추측하지 마세요. '
                 '특정 제품 설명은 그 제품에만 한정하고 원문에 없는 조작·안전 지침을 만들지 마세요. '
                 '직접 지원되는 사실이 부족하면 부족한 그대로 반환하세요. 새로운 URL이나 source id는 만들지 마세요. '
-                'facts:[{id:문자열,text:문자열,source_ids:[제공된 정확한 id],core:boolean,kind:core|practical|condition|other}]. '
+                'facts:[{id:문자열,text:문자열,source_ids:[제공된 정확한 id],core:boolean,kind:core|practical|condition|other}]. '+
+                BOUNDARY_RULES+
                 '각 사실은 한 가지 주장만 담으세요. 핵심 사실 최소 2개, 실용 지침과 조건을 포함해 최소 4개가 모두 원문으로 지원되어야 합니다.\n'
                 + json.dumps({'title': title, 'topic': topic, 'sources': sources,
                               'originals': captured}, ensure_ascii=False))

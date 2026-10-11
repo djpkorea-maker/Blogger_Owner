@@ -160,7 +160,9 @@ class RepairImages:
             before=p['before'];pack=collect_cached(self.store,self.ai,title,title,self.adapter.blog_id+':image-repair:'+str(pid)+':'+digest(content),self.progress,article=content)
             corpus=[dict(r) for r in self.store.db.execute('SELECT post_id,title,content,url,status FROM posts WHERE blog_id=? AND present=1',(self.adapter.blog_id,))]
             peers=[r for r in corpus if r['status']=='LIVE' and r['post_id']!=str(before['id'])]
-            fast=asdict(fast_check(dict(before,title=title,content=content,url=base_url),peers))
+            from .article_policy import generated_fast,VERSION as ARTICLE_POLICY
+            checker=generated_fast if p.get('mode')=='REPLACEMENT' else fast_check
+            fast=asdict(checker(dict(before,title=title,content=content,url=base_url),peers))
             if fast['issues']:raise ImageHold('수정안 형식 검사 보류: '+' / '.join(fast['issues']))
             self.progress('본문 사실·안전·품질 검사',0,1)
             from .fact_search import collect
@@ -176,7 +178,7 @@ class RepairImages:
             if len(checked)!=2:raise ImageHold('검증된 이미지 2장 필요')
             if p.get('mode')=='REPLACEMENT':
                 from .finalize import decide
-                final_payload={'title':title,'composed_content':content,'search_description':p.get('search_description',''),'labels':before.get('labels',[]),'evidence':pack,'independent_fact_search':audit,'final_fact_article_hash':digest({'title':title,'content':content})}
+                final_payload={'title':title,'composed_content':content,'search_description':p.get('search_description',''),'labels':before.get('labels',[]),'evidence':pack,'independent_fact_search':audit,'final_fact_article_hash':digest({'title':title,'content':content}),'reference_bindings':p.get('reference_bindings')}
                 p['replacement_final']=decide(self.ai,final_payload,[r for r in corpus if r['post_id']!=str(before['id'])],base_url,checked,fetch or public_fetch)
             links=check_links(content,base_url,corpus,pack,fetch or public_fetch)
             self.baseline(p);plan=Apply(self.store,self.adapter).prepare(str(before['id']),title,content,before.get('labels',[]))

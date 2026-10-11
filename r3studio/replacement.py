@@ -96,13 +96,30 @@ class Replacement:
     def resume(self,pid,generator):
         row,p=self.images.load(pid);self.images.baseline(p)
         if p.get('mode')!='REPLACEMENT':raise ImageHold('전체 교체 작업을 선택하세요.')
-        if p.get('replacement_preview_ready'):return {'proposal_id':pid,'status':row['status'],**p}
         g=Generation(self.store,self.ai,self.adapter.blog_id,self.progress)
         job=p.get('replacement_job_id')
         if type(job) is not int:raise ImageHold('전체 교체 생성 작업 기록 없음: 새 작업 필요')
         try:
             payload=g.load_job(job)['payload'];target=replacement_target(self.store,self.adapter.blog_id,payload)
             if target['proposal_id']!=pid:raise ImageHold('다른 수정안의 생성 작업: 진행 중지')
+            from .article_policy import VERSION as ARTICLE_POLICY,strip_auxiliary
+            if p.get('replacement_preview_ready') and p.get('article_policy')==ARTICLE_POLICY and text_ready(payload):
+                return {'proposal_id':pid,'status':row['status'],**p}
+            preserved_choices=deepcopy(p.get('image_choices',{}))
+            if p.get('replacement_preview_ready'):
+                if any(choice.get('request_id') and not choice.get('receipt') for choice in preserved_choices.values()):
+                    raise ImageHold('이전 이미지 업로드 결과 미확정: 수정·복원 결과 확인 후 이어가세요. 재업로드하지 않습니다.')
+                from .text_flow import checkpoint
+                checkpoint(payload,'이전 시험판 본문·이미지 보존')
+                if payload.get('image_candidates'):payload['preserved_image_candidates']=deepcopy(payload['image_candidates'])
+                payload['content']=strip_auxiliary(payload['content'])
+                for key in ('deep','fast','replacement_links_ready','text_review_hash','text_review_context','text_review_checked_at'):
+                    payload.pop(key,None)
+                p.pop('replacement_preview_ready',None)
+                for key in ('plan','proposal_hash','replacement_final'):p.pop(key,None)
+                g.save(job,'공통 기준으로 기존 본문·이미지 재검사','HOLD',payload)
+                self.images.save(pid,p)
+
             self.progress('저장 본문 검사·보완' if payload.get('content') and not text_ready(payload) else '이미지 단계 준비' if text_ready(payload) else '전체 교체 본문 생성',0,1)
             from .text_flow import continue_saved
             if not text_ready(payload):
@@ -122,7 +139,7 @@ class Replacement:
                 from .links import append_verified_candidates
                 peers=[dict(r) for r in self.store.db.execute('SELECT post_id,title,content,url,status FROM posts WHERE blog_id=? AND present=1 AND post_id!=?',(self.adapter.blog_id,target['post_id']))]
                 self.progress('관련 LIVE 내부링크·공식 근거 배치',0,1)
-                payload['content']=append_verified_candidates(self.ai,payload['title'],payload['content'],peers,payload['evidence'])
+                payload['content']=append_verified_candidates(self.ai,payload['title'],payload['content'],peers,payload['evidence'],strict=True,record=lambda v:payload.update(reference_bindings=v))
                 payload['replacement_links_ready']=True
                 g.save(job,'전체 교체 링크 배치','HOLD',payload)
             candidates=payload.get('image_candidates',[])
@@ -135,8 +152,6 @@ class Replacement:
             if Document(content).images:raise ImageHold('신규 본문에 예상하지 않은 이미지: 자동 교체 중지')
             choices={};edits={};seen=set()
             self.cache.mkdir(parents=True,exist_ok=True)
-            sections=content.lower().find('<h2',content.lower().find('<h2')+1)
-            if sections<0:raise ImageHold('새 본문 H2 구성 확인 필요')
             blocks=[]
             for slot,candidate in enumerate(candidates,1):
                 c=dict(candidate)
@@ -151,10 +166,20 @@ class Replacement:
                 import html
                 block='<figure><img src="'+url+'" alt="'+html.escape(c.get('alt',''),quote=True)+'"><figcaption>그림 '+str(slot)+'. '+html.escape(c.get('caption',''))+'</figcaption></figure>'
                 blocks.append(block);edits[str(slot)]=c
-                if c.get('result')=='PASS':choices[str(slot)]={'candidate':c,'expected_url':url,'mode':'replace'}
-            if len(blocks)==2:content=content[:sections]+blocks[0]+content[sections:]+blocks[1]
+                if c.get('result')=='PASS':
+                    choice={'candidate':c,'expected_url':url,'mode':'replace'}
+                    prior=preserved_choices.get(str(slot),{})
+                    receipt=prior.get('receipt')
+                    if (isinstance(receipt,dict) and receipt.get('ok') is True
+                        and receipt.get('byte_hash')==c.get('info',{}).get('byte_hash')):
+                        choice['receipt']=deepcopy(receipt)
+                        if prior.get('request_id'):choice['request_id']=prior['request_id']
+                    choices[str(slot)]=choice
+            if len(blocks)==2:
+                from .article_policy import place_figures
+                content=place_figures(content,blocks,list(edits.values()))
             for key,c in edits.items():c['edit_mode']='replace';c['target']={'slot':int(key),'url':f'r3-local:replacement/{pid}/{key}','article_hash':digest(content)}
-            p.update(proposed_content=content,image_choices=choices,image_edit_candidates=edits,replacement_preview_ready=True)
+            p.update(article_policy=ARTICLE_POLICY,proposed_content=content,image_choices=choices,image_edit_candidates=edits,replacement_preview_ready=True)
             p['reason']='전체 교체 본문·이미지 후보 준비 · 이미지 확인 후 수정안 최종 검증을 누르세요.' if len(choices)==2 else '전체 교체 본문 보관 · 미통과 이미지 재생성 후 최종 검증 필요'
             self.images.baseline(p)
             return self.images.save(pid,p)
@@ -167,7 +192,7 @@ class Replacement:
     def capture(self,pid,p,g,job):
         record=g.load_job(job);payload=record['payload']
         p['replacement_stage']=record['stage']
-        for key in ('text_versions','text_review_history','text_repair_attempts','image_candidates','fact_search_attempts','image_pipeline','text_repair_run'):
+        for key in ('text_versions','text_review_history','text_repair_attempts','image_candidates','fact_search_attempts','image_pipeline','text_repair_run','reference_bindings','article_policy'):
             if payload.get(key):p[key]=deepcopy(payload[key])
         p['generation_text_metrics']=deepcopy(payload.get('fast',{}).get('metrics',{}))
         if payload.get('deep'):p['generation_text_review']=deepcopy(payload['deep'])

@@ -2,13 +2,16 @@
 import json
 from copy import deepcopy
 from .sync import now, digest
-from .gates import Document, fast_check, text_length, MIN_TEXT_LENGTH, TARGET_TEXT_LENGTH, TARGET_MAX_TEXT_LENGTH
+from .gates import Document, TARGET_TEXT_LENGTH, TARGET_MAX_TEXT_LENGTH
+from .article_policy import generated_fast as fast_check, body_text, body_metrics, MIN_BODY_LENGTH as MIN_TEXT_LENGTH, TARGET_BODY_LENGTH, BOUNDARY_RULES, VERSION as ARTICLE_POLICY
+
+def text_length(content):return body_metrics(content)['body_text_length']
 from .deep import REQUIRED, evaluate
 from .evidence import EvidenceHold, validate_pack
 from .sources import require_originals, norm
 from .tasks import Cancelled
 
-POLICY='R3.0-text-before-images-0.80'
+POLICY='R3.0-text-before-images-0.81'
 MAX_REPAIR_ROUNDS=2
 DEFERRED={'이미지 2장 미만','내부링크 확인 필요','외부 근거 링크 확인 필요'}
 LABELS={'fact':'사실 정확성','safety':'안전성','intent':'검색 의도','practical_value':'실용성','originality':'독창성'}
@@ -20,7 +23,8 @@ def ready(payload):
         and type(review.get('score')) in (int,float) and 85<=review['score']<=100
         and review.get('severity')=='none' and review.get('issues')==[]
         and not review.get('findings') and review.get('unsupported_claims')==[]
-        and not (set(payload.get('fast',{}).get('issues',[]))-DEFERRED))
+        and not (set(payload.get('fast',{}).get('issues',[]))-DEFERRED)
+        and text_length(payload.get('content',''))>=MIN_TEXT_LENGTH)
 
 def basis(payload):
     return digest({'policy':POLICY,'title':payload.get('title'),'content':payload.get('content'),'evidence':payload.get('evidence')})
@@ -29,6 +33,7 @@ def diagnosis(payload):
     deep=payload.get('deep',{});review=deep.get('review',{})
     if not isinstance(review,dict):review={}
     structural=[x for x in payload.get('fast',{}).get('issues',[]) if x not in DEFERRED]
+    if text_length(payload.get('content',''))<MIN_TEXT_LENGTH and '본문 길이 검토 필요' not in structural:structural.insert(0,'본문 길이 검토 필요')
     failures=[LABELS[k]+': '+{'FAIL':'문제 발견','UNKNOWN':'확인 불가'}.get(review.get(k),'결과 누락')
               for k in REQUIRED if review.get(k)!='PASS']
     if type(review.get('score')) in (int,float) and review['score']<85:failures.append('본문 점수 '+str(review['score'])+'점 / 기준 85점')
@@ -52,14 +57,15 @@ def diagnosis(payload):
 
 
 def repair_contract(payload,problem):
-    return {'length':{'measurement':'HTML 태그 제외·공백 정규화 본문 문자 수',
+    return {'length':{'measurement':'HTML·ALT·그림 설명·참고 목록·관련 글 제외, 소제목 포함·공백 정규화 본문 문자 수',
                      'current':text_length(payload['content']),'minimum':MIN_TEXT_LENGTH,
-                     'target_minimum':TARGET_TEXT_LENGTH,'target_maximum':TARGET_MAX_TEXT_LENGTH,
+                     'target_minimum':TARGET_BODY_LENGTH,'target_maximum':TARGET_MAX_TEXT_LENGTH,
                      'missing_to_minimum':max(0,MIN_TEXT_LENGTH-text_length(payload['content']))},
             'issues':problem['text_review']['issues'],
             'findings':problem['text_review']['findings'],
             'unsupported_claims':problem['text_review']['unsupported_claims'],
             'scope_rule':'확인된 제품·모델·조건을 명시하세요. 대상을 원문으로 확인할 수 없으면 해당 동작 설명을 삭제하세요. 단순히 기종마다 다르다는 문장만 덧붙여 일반화 주장을 남기지 마세요.',
+            'factual_boundaries':BOUNDARY_RULES,
             'length_rule':'모든 지적을 함께 해결하세요. 근거 있는 사용 조건·점검 순서·중단 기준을 명료하게 설명해 본문을 보완하세요. 반복·추측·불필요한 서론으로 글자 수를 채우지 마세요.'}
 
 def review_context(g,payload,corpus,peers):
@@ -158,9 +164,9 @@ def continue_saved(g,job,use_current_review=False):
     try:
         from .replacement import replacement_target
         target=replacement_target(g.store,g.blog_id,payload)
-        if not target:raise EvidenceHold('전체 교체 작업에서만 저장 본문을 보완할 수 있습니다.')
+        excluded=target['post_id'] if target else None
         validate_pack(payload['evidence']);require_originals(payload['evidence'])
-        corpus=[dict(r) for r in g.store.db.execute('SELECT post_id,title,content,status,url FROM posts WHERE blog_id=? AND present=1 AND post_id!=?',(g.blog_id,target['post_id']))]
+        corpus=[dict(r) for r in g.store.db.execute('SELECT post_id,title,content,status,url FROM posts WHERE blog_id=? AND present=1 AND post_id!=?',(g.blog_id,excluded or ''))]
         peers=[{'id':'post:'+r['post_id'],'title':r['title'],'summary':' '.join(Document(r['content']).text)[:1200],'status':r['status'],'comparison_basis':'BLOGGER_BODY'} for r in corpus]
         from .job_peers import comparison_jobs
         for row in comparison_jobs(g.store,g.blog_id,job,target):
@@ -196,6 +202,7 @@ def continue_saved(g,job,use_current_review=False):
                 '그 자리에 넣을 new_html과 reason을 반환하세요. edits는 1~6개, 기존 본문의 절반 이하만 교체하세요. '
                 '짧은 문단이나 닫힌 H2 구역을 포함한 구절을 선택해 검증된 설명을 그 자리에 확장할 수 있습니다. '
                 'HTML 태그를 제외하고 공백을 정규화한 본문 '+str(TARGET_TEXT_LENGTH)+'~'+str(TARGET_MAX_TEXT_LENGTH)+'자를 목표로 하세요. '
+                '그림 설명·참고 목록·관련 글은 분량에서 제외하며 목표는 '+str(TARGET_BODY_LENGTH)+'자입니다. '+BOUNDARY_RULES+
                 '현재 길이와 부족분은 repair_contract.length에 있습니다. 사실 수정 뒤 길이가 더 줄지 않도록 전체 부족분도 해결하세요. '
                 '실제로 지원된 근거와 인용만 사용하고 모델별 지침을 모든 제품에 일반화하지 마세요. '
                 '표시등 색·자동 꺼짐 시간·오류 표시·분리 조작은 확인된 제품·모델·조건에만 한정하세요. '
@@ -219,6 +226,7 @@ def continue_saved(g,job,use_current_review=False):
                                    diagnostic={'reason':'TEXT_REPAIR_CYCLE','summary':'이전 보완 본문을 반복하는 후보를 적용하지 않았습니다.','stage':stage})
             payload['text_repair_candidate']={'content':candidate,'edits':answer['edits']}
             checkpoint(payload,'부분 보완 직전 본문')
+            if payload.get('image_candidates'):payload['preserved_image_candidates']=deepcopy(payload['image_candidates'])
             payload['content']=candidate
             checkpoint(payload,'부분 보완 '+str(number)+' 후보 보관')
             for key in ('deep','image_candidates','composed_content','linked_content','final','replacement_links_ready',
@@ -262,7 +270,7 @@ def review_lines(review):
     states={'PASS':'통과','FAIL':'문제 발견','UNKNOWN':'확인 불가'}
     lines=['본문 검사 항목: '+' / '.join(LABELS[k]+': '+states.get(review.get('states',{}).get(k),'결과 없음') for k in REQUIRED)]
     if review.get('text_length') is not None:
-        lines.append('본문 길이: '+str(review['text_length'])+'자 / 프로그램 기준 '+str(review.get('text_minimum',MIN_TEXT_LENGTH))+'자 / 부족 '+str(review.get('text_deficit',0))+'자 · HTML 태그 제외·공백 정규화')
+        lines.append('본문 길이: '+str(review['text_length'])+'자 / 프로그램 기준 '+str(review.get('text_minimum',MIN_TEXT_LENGTH))+'자 / 부족 '+str(review.get('text_deficit',0))+'자 · HTML·그림 설명·참고 목록·관련 글 제외·공백 정규화')
         lines.append('본문 길이는 프로그램 구조 기준이며 Google·AdSense 승인 판정이 아닙니다.')
     if review.get('score') is not None:lines.append('본문 점수: '+str(review['score'])+' / 통과 기준 85')
     for issue in review.get('issues',[]):lines.append('본문 지적: '+str(issue))
@@ -288,8 +296,8 @@ def report(proposal):
     elif proposal.get('generation_text_review'):
         deep=proposal['generation_text_review'];r=deep.get('review',{});metrics=proposal.get('generation_text_metrics',{})
         lines.extend(review_lines({'states':{k:r.get(k) for k in REQUIRED},'score':r.get('score'),'issues':deep.get('issues',[]),
-            'findings':[],'unsupported_claims':[],'text_length':metrics.get('text_length'),'text_minimum':MIN_TEXT_LENGTH,
-            'text_deficit':max(0,MIN_TEXT_LENGTH-metrics['text_length']) if type(metrics.get('text_length')) is int else None}))
+            'findings':[],'unsupported_claims':[],'text_length':metrics.get('body_text_length'),'text_minimum':MIN_TEXT_LENGTH,
+            'text_deficit':max(0,MIN_TEXT_LENGTH-metrics['body_text_length']) if type(metrics.get('text_length')) is int else None}))
     from .fact_search import diagnostic_lines
     attempts=proposal.get('fact_search_attempts') or diagnostic.get('fact_search_attempts',[])
     if attempts:lines.extend(['\n독립 Fact 검색 기록']+diagnostic_lines(attempts))
@@ -301,6 +309,11 @@ def report(proposal):
         lines.append('\n작업 중단 원인: '+diagnostic.get('summary','확인 필요'))
         for key,label in [('reason','오류 분류'),('stage','중단 단계'),('http_status','HTTP 오류'),('model','사용 모델'),('action','다음 조치')]:
             if diagnostic.get(key) is not None:lines.append(label+': '+str(diagnostic[key]))
+    binding=proposal.get('reference_bindings',{})
+    if binding.get('references'):
+        lines.append('\n본문에 실제 연결한 참고 자료')
+        for ref in binding['references']:
+            lines.extend([ref['label']+' · '+ref['url'],'연결된 본문: '+ref['excerpt']])
     run=proposal.get('text_repair_run',{})
     if run:lines.append('\n이번 실행 본문 보완: '+str(run.get('used',0))+'/'+str(run.get('limit',MAX_REPAIR_ROUNDS))+'회 · '+run.get('state','확인 필요'))
     for index,attempt in enumerate(proposal.get('text_repair_attempts',[]),1):

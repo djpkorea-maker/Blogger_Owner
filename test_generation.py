@@ -58,7 +58,7 @@ class Tests(unittest.TestCase):
     if '근거 장부를 만드세요' in prompt:return pack()
     if 'claims:[{fact_id' in prompt:
      return {'sources':[{'source_id':'s1','grade':'A','publisher':'제조사'},{'source_id':'s2','grade':'A','publisher':'기관'}],'claims':[{'fact_id':str(i),'source_id':'s1' if i%2 else 's2','quote':'조건을 확인하고 안전한 사용 지침을 따릅니다.','supported':True} for i in range(4)]}
-    if '블로그 글을 작성하세요' in prompt:return {'content_html':'<h2>점검</h2><p>'+('서로 다른 점검 조건 확인 '*180)+'</p><h2>조건</h2><p>표시 확인</p>','search_description':'새 가전 점검 방법과 조건 안내'}
+    if '블로그 글을 작성하세요' in prompt:return {'content_html':'<h2>점검</h2><p>'+''.join('점검 조건 '+str(i)+'에서는 표시와 안전한 사용 범위를 제품 설명서와 대조합니다. ' for i in range(90))+'</p><h2>조건</h2><p>표시 확인</p>','search_description':'새 가전 점검 방법과 조건 안내'}
     return super().object(prompt)
   with tempfile.TemporaryDirectory() as d:
    s=Store(d+'/db');Sync(s,DemoAdapter(),'demo').run()

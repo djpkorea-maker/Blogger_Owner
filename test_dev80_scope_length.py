@@ -5,7 +5,9 @@ from unittest.mock import patch
 import test_dev70_replacement as fixture
 from test_dev78_saved_body import AI as BaseAI,seed
 from test_dev75_original_refill import TITLE
-from r3studio.gates import Document,fast_check,text_length,MIN_TEXT_LENGTH,TARGET_TEXT_LENGTH
+from r3studio.gates import Document
+from r3studio.article_policy import generated_fast as fast_check,body_metrics,MIN_BODY_LENGTH as MIN_TEXT_LENGTH,TARGET_BODY_LENGTH as TARGET_TEXT_LENGTH
+def text_length(content):return body_metrics(content)['body_text_length']
 from r3studio.text_flow import diagnosis,report,repair_contract
 from r3studio.generation import Generation
 from r3studio.ai import AIError
@@ -108,7 +110,7 @@ class Tests(unittest.TestCase):
                 if mode=='stays_short':
                     review=out['error_diagnostic']['text_review'];self.assertGreater(review['text_deficit'],0)
                     self.assertEqual(review['text_length'],text_length(out['proposed_content']))
-                    self.assertIn('프로그램 기준 1500자',out['reason'])
+                    self.assertIn('프로그램 기준 1800자',out['reason'])
                 else:
                     self.assertEqual(out['error_diagnostic']['text_review']['states']['fact'],'FAIL')
                     self.assertGreaterEqual(out['generation_text_metrics']['text_length'],MIN_TEXT_LENGTH)
@@ -136,11 +138,11 @@ class Tests(unittest.TestCase):
 
     def test_plain_text_measurement_and_minimum_are_shared_by_fast_and_repair_diagnosis(self):
         content=short_body();result=fast_check({'id':'NEW','title':TITLE,'content':content,'status':'DRAFT'})
-        self.assertEqual(result.metrics['text_length'],text_length(content))
+        self.assertEqual(result.metrics['body_text_length'],text_length(content))
         self.assertGreater(len(content),1800);self.assertIn('본문 길이 검토 필요',result.issues)
         p={'title':TITLE,'content':content,'fast':{'issues':result.issues},'deep':{'review':deepcopy(fixture.REVIEW)}}
         d=diagnosis(p);contract=repair_contract(p,d)
-        self.assertEqual(d['text_review']['text_deficit'],result.metrics['text_deficit'])
+        self.assertEqual(d['text_review']['text_deficit'],result.metrics['body_deficit'])
         self.assertEqual(contract['length']['current'],result.metrics['text_length'])
         self.assertIn(str(result.metrics['text_length'])+'자',d['summary'])
 

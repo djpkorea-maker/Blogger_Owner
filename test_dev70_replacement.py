@@ -22,7 +22,14 @@ CONTENT='<h2>청소기 점검</h2><p>'+''.join('청소기 바퀴와 바닥 상�
 class AI(Vision):
  def object(self,p):
   if 'prompts:' in p:return {'prompts':['바퀴 확인 장면','바닥 정리 장면']}
-  if 'ids:' in p:return {'ids':['2']}
+  if 'ids:' in p:
+   data=json.loads(p.rsplit('\n',1)[1])
+   from r3studio.article_policy import body_text
+   answer={'ids':['2']}
+   if data.get('verified_claims'):
+    c=data['verified_claims'][0]
+    answer['references']=[{'source_id':c['source_id'],'fact_id':c['fact_id'],'excerpt':body_text(data['article'])[:100]}]
+   return answer
   return dict(REVIEW)
  def ask(self,*a,**kw):return {'citations':[{'url':'https://manufacturer.example/manual'}]}
 class Generator:
@@ -155,7 +162,7 @@ class Tests(unittest.TestCase):
    _,p=svc.images.load(r['proposal_id']);p['image_choices']['1']['request_id']='sent-once';p['image_choices']['1']['receipt']={'ok':True};svc.images.save(r['proposal_id'],p)
    again=svc.resume(r['proposal_id'],Generator());self.assertEqual(again['image_choices']['1']['request_id'],'sent-once');self.assertEqual(again['image_choices']['1']['receipt'],{'ok':True});s.close()
  def test_text_ready_does_not_ignore_html_or_factual_failures(self):
-  p={'deep':{'review':dict(REVIEW)},'fast':{'issues':['이미지 2장 미만']}};self.assertTrue(text_ready(p))
+  p={'content':CONTENT,'deep':{'review':dict(REVIEW)},'fast':{'issues':['이미지 2장 미만']}};self.assertTrue(text_ready(p))
   p['fast']['issues'].append('태그 순서 확인: p');self.assertFalse(text_ready(p))
   p['fast']['issues']=[];p['deep']['review']['fact']='UNKNOWN';self.assertFalse(text_ready(p))
 

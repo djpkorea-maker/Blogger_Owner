@@ -40,16 +40,24 @@ def generate_candidates(generation,generator,job_id,directory):
     db.execute('CREATE TABLE IF NOT EXISTS image_generation_attempts(id INTEGER PRIMARY KEY,job_id INTEGER,slot INTEGER,attempt INTEGER,created_at TEXT,status TEXT,payload TEXT)');db.commit()
     context=digest({'version':78,'title':payload['title'],'content':payload['content'],
                     'image_model':generator.model,'qa_model':generation.ai.model})
-    previous=payload.get('image_candidates',[])
+    previous=payload.get('image_candidates',[]) or payload.get('preserved_image_candidates',[])
     payload.setdefault('image_pipeline',{'status':'PREPARING','generation_started':any(c.get('generation_context')==context for c in previous),'stage':'이미지 단계 준비'})
     scenes=payload.get('image_scene_plan',{})
     prompts=scenes.get('prompts') if scenes.get('context')==context else None
     if not isinstance(prompts,list) or len(prompts)!=2 or any(not isinstance(p,str) or not p.strip() for p in prompts):
         payload['image_pipeline']={'status':'PLANNING','generation_started':bool(payload.get('image_pipeline',{}).get('generation_started')),'stage':'이미지 2장 장면 계획'}
         generation.save(job_id,'이미지 2장 장면 계획','RUNNING',payload)
-        prompts=generation.ai.object('본문에 맞는 서로 다른 단일 장면 이미지 2개를 계획하세요. prompts:[문자열,문자열]. 동양적 생활환경과 장비를 우선합니다. 글에 없는 장비를 넣지 마세요. 콜라주·분할 화면·글자 삽입 금지. 정확한 회로도나 치수 도면을 그림으로 만들지 마세요.\n'+json.dumps({'title':payload['title'],'content':payload['content']},ensure_ascii=False)).get('prompts')
+        plan=generation.ai.object('본문에 맞는 서로 다른 단일 장면 이미지 2개를 계획하세요. prompts:[문자열,문자열], section_indices:[각 이미지와 직접 관련된 본문 H2 구역 번호 1부터, 서로 다른 번호]. 참고 자료·관련 글 구역은 번호에 포함하지 마세요. 실제 안전 점검·사용 조건과 연결되는 장면을 고르세요. 붉은 표시등이나 장치 모습은 고장 원인을 증명하지 않습니다. 동양적 생활환경과 장비를 우선합니다. 글에 없는 장비를 넣지 마세요. 콜라주·분할 화면·글자 삽입 금지. 정확한 회로도나 치수 도면을 그림으로 만들지 마세요.\n'+json.dumps({'title':payload['title'],'content':payload['content']},ensure_ascii=False))
+        if not isinstance(plan,dict):raise ImageHold('이미지 장면 계획 응답 형식 오류')
+        prompts=plan.get('prompts')
+        placements=plan.get('section_indices')
+        if placements is not None:
+            from .article_policy import sections
+            count=len(sections(payload['content'])[1])
+            if not isinstance(placements,list) or len(placements)!=2 or any(type(i) is not int or not 1<=i<=count for i in placements) or len(set(placements))!=2:raise ImageHold('이미지 장면의 본문 구역 번호 확인 필요')
+        scenes={'section_indices':placements}
     if not isinstance(prompts,list) or len(prompts)!=2 or any(not isinstance(p,str) or not p.strip() for p in prompts):raise ImageHold('이미지 장면 계획 오류')
-    payload['image_scene_plan']={'context':context,'prompts':prompts}
+    payload['image_scene_plan']={'context':context,'prompts':prompts,'section_indices':scenes.get('section_indices')}
     results=[]
     def save_result(stage):
         payload['image_candidates']=list(results)
@@ -60,9 +68,30 @@ def generate_candidates(generation,generator,job_id,directory):
         if old.get('result')=='PASS' and old.get('generation_context')==context:
             try:
                 info=inspect_bytes(Path(old['file']).read_bytes())
-                if info['byte_hash']==old['info']['byte_hash'] and info['pixel_hash']==old['info']['pixel_hash']:
+                if info['byte_hash']==old['info']['byte_hash'] and info['pixel_hash']==old['info']['pixel_hash'] and all(r.get('info',{}).get('pixel_hash')!=info['pixel_hash'] for r in results):
                     results.append(old);generation.progress('통과 이미지 '+str(slot)+' 재사용',slot,2)
                     save_result('이미지 '+str(slot)+' 통과 후보 재사용');continue
+            except (OSError,KeyError,ImageHold):pass
+        # Changed article: keep checked bytes and re-run pixel/ALT/caption QA
+        # against this exact body before deciding whether new generation is needed.
+        if old.get('result')=='PASS' and old.get('file') and old.get('info'):
+            try:
+                info=inspect_bytes(Path(old['file']).read_bytes())
+                if info['byte_hash']!=old['info']['byte_hash'] or info['pixel_hash']!=old['info']['pixel_hash']:raise ImageHold('보존 이미지 파일 변경')
+                generation.progress('보존 이미지 '+str(slot)+' 픽셀·ALT·그림 설명 재검사',0,1)
+                checked,_=ImageQA(generation.store,generation.ai).check(old['file'],payload['title'],payload['content'],generation.blog_id,'job:'+str(job_id),force=True)
+                if checked.get('error_diagnostic'):raise AIError(checked.get('reason','이미지 재검사 오류'),checked['error_diagnostic'])
+                if checked.get('result')=='PASS' and all(r.get('info',{}).get('pixel_hash')!=checked.get('info',{}).get('pixel_hash') for r in results):
+                    checked['generation_context']=context;checked['reused_after_body_review']=True
+                    placement=payload['image_scene_plan'].get('section_indices')
+                    if placement:checked['placement_section']=placement[slot-1]
+                    results.append(checked);save_result('보존 이미지 '+str(slot)+' 재검사 통과');continue
+            except AIError as exc:
+                payload['image_pipeline'].update(status='HOLD',stage='보존 이미지 '+str(slot)+' 재검사 연결 오류')
+                payload['error_diagnostic']={**exc.diagnostic,'stage':payload['image_pipeline']['stage']}
+                payload['reason']=str(exc)
+                generation.save(job_id,payload['image_pipeline']['stage'],'HOLD',payload)
+                raise
             except (OSError,KeyError,ImageHold):pass
         result=None
         for attempt in range(1,4):
@@ -84,7 +113,12 @@ def generate_candidates(generation,generator,job_id,directory):
                 result={'result':'HOLD','reason':str(exc)}
                 if isinstance(exc,AIError) and exc.diagnostic:
                     result['error_diagnostic']=exc.diagnostic;terminal=exc
-            result['generation_context']=context;status=result['result']
+            result['generation_context']=context
+            placement=payload['image_scene_plan'].get('section_indices')
+            if placement:result['placement_section']=placement[slot-1]
+            if result.get('result')=='PASS' and any(r.get('info',{}).get('pixel_hash')==result.get('info',{}).get('pixel_hash') for r in results):
+                result.update(result='HOLD',reason='두 이미지의 실제 픽셀이 같습니다. 다른 본문 장면으로 재생성하세요.')
+            status=result['result']
             payload['image_pipeline'].update(status=status,stage='이미지 '+str(slot)+' 생성·QA '+status)
             with db:db.execute('UPDATE image_generation_attempts SET status=?,payload=? WHERE id=?',(status,json.dumps(result,ensure_ascii=False),attempt_id))
             payload['image_candidates']=results+[result]

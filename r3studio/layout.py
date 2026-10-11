@@ -19,11 +19,9 @@ def figure(candidate,receipt,index):
 def compose(content,candidates,receipts):
     if len(candidates)!=2 or len(receipts)!=2:raise LayoutHold('검증된 이미지 2장 필요')
     if Document(content).images:raise LayoutHold('기존 이미지가 있는 본문은 별도 교체 계획이 필요합니다.')
-    sections=list(re.finditer(r'<h2\b',content,re.I))
-    if len(sections)<2:raise LayoutHold('본문 H2 구성 확인 필요')
-    position=sections[1].start()
-    output=content[:position]+figure(candidates[0],receipts[0],1)+content[position:]+figure(candidates[1],receipts[1],2)
-    if Document(output).errors:raise LayoutHold('이미지 배치 후 HTML 오류')
+    from .article_policy import place_figures
+    try:output=place_figures(content,[figure(candidates[0],receipts[0],1),figure(candidates[1],receipts[1],2)],candidates)
+    except ValueError as exc:raise LayoutHold(str(exc)) from None
     return output
 
 def upload_checked(adapter,candidate,request_id):

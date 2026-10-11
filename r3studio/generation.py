@@ -3,7 +3,8 @@ import json
 from dataclasses import asdict
 from .tasks import Cancelled
 from .sync import now,digest
-from .gates import normalize,shingles,Document,fast_check,TARGET_TEXT_LENGTH,TARGET_MAX_TEXT_LENGTH
+from .gates import normalize,shingles,Document,TARGET_TEXT_LENGTH,TARGET_MAX_TEXT_LENGTH
+from .article_policy import generated_fast as fast_check,BOUNDARY_RULES,TARGET_BODY_LENGTH,VERSION as ARTICLE_POLICY
 from .evidence import Research,EvidenceHold
 from .deep import evaluate
 
@@ -117,7 +118,7 @@ class Generation:
             if payload.get('writer_evidence_hash')==evidence_hash and payload.get('content'):
                 article={'content_html':payload['content'],'search_description':payload.get('search_description','')}
             else:
-                article=self.ai.object('다음 근거 장부의 사실만 사용하여 블로그 글을 작성하세요. 없는 수치·원인·경험을 만들지 마세요. 특정 제품 지침을 모든 제품에 일반화하지 마세요. 조건·예외·실제 점검 순서를 포함하세요. 원문과 검증된 인용에 없는 안전 조작을 추가하지 마세요. HTML 태그를 제외하고 공백을 정규화한 실제 본문 '+str(TARGET_TEXT_LENGTH)+'~'+str(TARGET_MAX_TEXT_LENGTH)+'자, H1 제외, H2 최소 2개, 내부 메타데이터 제외. 글자 수를 채우려고 문장 반복·추측·근거 없는 수치·조작을 추가하지 마세요. 모델별 설명은 검증된 제품·조건에만 한정하고 그 대상을 확인하지 못하면 해당 동작 설명을 쓰지 마세요. content_html:문자열, search_description:문자열(150자 이하). 이미지는 아직 삽입하지 마세요.\n'+json.dumps(writer_context(title,topic,payload['evidence']),ensure_ascii=False))
+                article=self.ai.object('다음 근거 장부의 사실만 사용하여 블로그 글을 작성하세요. 없는 수치·원인·경험을 만들지 마세요. 특정 제품 지침을 모든 제품에 일반화하지 마세요. 조건·예외·실제 점검 순서를 포함하세요. 원문과 검증된 인용에 없는 안전 조작을 추가하지 마세요. HTML 태그를 제외하고 공백을 정규화한 실제 본문 '+str(TARGET_TEXT_LENGTH)+'~'+str(TARGET_MAX_TEXT_LENGTH)+'자, 목표 '+str(TARGET_BODY_LENGTH)+'자, 그림 설명·참고 목록·관련 글 분량 제외, H1 제외, H2 최소 2개, 내부 메타데이터 제외. 글자 수를 채우려고 문장 반복·추측·근거 없는 수치·조작을 추가하지 마세요. 모델별 설명은 검증된 제품·조건에만 한정하고 그 대상을 확인하지 못하면 해당 동작 설명을 쓰지 마세요. '+BOUNDARY_RULES+' content_html:문자열, search_description:문자열(150자 이하). 이미지는 아직 삽입하지 마세요.\n'+json.dumps(writer_context(title,topic,payload['evidence']),ensure_ascii=False))
                 payload.pop('image_candidates',None)
             html=article.get('content_html'); description=article.get('search_description')
             if isinstance(html,str) and html.strip():payload['draft_content']=html
@@ -149,18 +150,19 @@ class Generation:
             payload['independent_fact_search']=audit
             stage='Fact/Safety/Quality'; self.save(job,stage,'RUNNING',payload)
             post['independent_fact_search']=audit
-            text_fast=payload['fast']
-            if target:
-                # Images and links are prepared after this text-only gate.
-                text_fast={**text_fast,'issues':[i for i in text_fast.get('issues',[]) if i not in ('이미지 2장 미만','내부링크 확인 필요','외부 근거 링크 확인 필요')]}
-            payload['deep']=evaluate(self.ai,post,payload['evidence'],text_fast,text_only=bool(target))
-            if target:
-                from .text_flow import POLICY,basis,ready,diagnosis,checkpoint
-                checkpoint(payload,'최초 작성 본문 보존')
-                payload['text_gate_policy']=POLICY;payload['text_review_hash']=basis(payload)
+            # Every generated article uses the same text-only gate before images.
+            text_fast={**payload['fast'],'issues':[i for i in payload['fast'].get('issues',[]) if i not in ('이미지 2장 미만','내부링크 확인 필요','외부 근거 링크 확인 필요')]}
+            payload['deep']=evaluate(self.ai,post,payload['evidence'],text_fast,text_only=True)
+            from .text_flow import POLICY,basis,ready,diagnosis,checkpoint,continue_saved
+            checkpoint(payload,'최초 작성 본문 보존')
+            payload['article_policy']=ARTICLE_POLICY
+            payload['text_gate_policy']=POLICY;payload['text_review_hash']=basis(payload)
+            if not ready(payload):
+                payload['error_diagnostic']=diagnosis(payload);payload['reason']=payload['error_diagnostic']['summary']
+                self.save(job,'본문 품질 보완 필요','HOLD',payload)
+                if not target:
+                    payload=continue_saved(self,job,use_current_review=True)
                 if not ready(payload):
-                    payload['error_diagnostic']=diagnosis(payload);payload['reason']=payload['error_diagnostic']['summary']
-                    self.save(job,'본문 품질 보완 필요','HOLD',payload)
                     return {'job_id':job,'status':'HOLD','stage':'본문 품질 보완 필요','reason':payload['reason']}
             stage='이미지·링크 검사 대기'
             # Missing image, caption, link verification always blocks output.
@@ -248,7 +250,7 @@ class Generation:
             excluded=target['post_id'] if target else own_post_id(self.store,job_id)
             posts=[dict(r) for r in self.store.db.execute('SELECT post_id,title,content,url,status FROM posts WHERE blog_id=? AND present=1',(self.blog_id,)) if r['post_id']!=excluded]
             if not payload.get('linked_content'):
-                payload['linked_content']=append_verified_candidates(self.ai,payload['title'],payload['composed_content'],posts,payload['evidence'])
+                payload['linked_content']=append_verified_candidates(self.ai,payload['title'],payload['composed_content'],posts,payload['evidence'],strict=True,record=lambda v:payload.update(reference_bindings=v))
             payload['composed_content']=payload['linked_content']
             self.save(job_id,'공개 이미지 재검사','RUNNING',payload)
             images=check_public_images(self.store,self.ai,payload['title'],payload['composed_content'],cache_dir,self.blog_id,'job:'+str(job_id),download or public_image_bytes)

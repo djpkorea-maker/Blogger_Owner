@@ -2,14 +2,15 @@
 import json
 import re
 from dataclasses import asdict
-from .gates import fast_check,Document
+from .gates import Document
+from .article_policy import generated_fast as fast_check,VERSION as ARTICLE_POLICY
 from .deep import evaluate
 from .evidence import validate_pack
 from .sync import digest,now
 from .links import check_links
 
 class FinalHold(RuntimeError):pass
-GATE_VERSION='R3.0-final-0.21'
+GATE_VERSION='R3.0-final-0.81'
 
 def decide(ai,payload,live_posts,base_url,public_images,fetch):
     content=payload.get('composed_content','');title=payload.get('title','')
@@ -23,6 +24,8 @@ def decide(ai,payload,live_posts,base_url,public_images,fetch):
         if check.get('result')!='PASS' or check.get('url')!=image.get('src') or check.get('alt')!=image.get('alt') or check.get('article_hash')!=digest({'title':title,'content':content}):
             raise FinalHold('공개 이미지/ALT 검사 누락 또는 본문 변경')
     if re.search(r'(?:^|>)[\s]*(?:주제|본문|Pillar|Cluster|제목)\s*:',content,re.I):raise FinalHold('공개 본문에 내부 메타데이터 발견')
+    from .references import verify_binding_content
+    verify_binding_content(content,payload.get('reference_bindings'))
     links=check_links(content,base_url,live_posts,payload['evidence'],fetch)
     post={'id':'NEW','title':title,'content':content,'status':'DRAFT','url':base_url}
     fast=fast_check(post,live_posts)
@@ -33,7 +36,7 @@ def decide(ai,payload,live_posts,base_url,public_images,fetch):
     post['independent_fact_search']=payload['independent_fact_search']
     deep=evaluate(ai,post,payload['evidence'],asdict(fast))
     if deep.get('text_verified') is not True:raise FinalHold('최종 Fact/Safety/Quality 미통과')
-    return {'grade':'PASS','gate_version':GATE_VERSION,'evidence_hash':digest(payload['evidence']),'metadata_hash':digest({'labels':payload.get('labels',[]),'search_description':description}),'checked_at':now(),'corpus_hash':corpus_hash(live_posts),'article_hash':digest({'title':title,'content':content}),'links':links,'deep':deep,'public_images':public_images}
+    return {'grade':'PASS','article_policy':ARTICLE_POLICY,'gate_version':GATE_VERSION,'evidence_hash':digest(payload['evidence']),'metadata_hash':digest({'labels':payload.get('labels',[]),'search_description':description}),'checked_at':now(),'corpus_hash':corpus_hash(live_posts),'article_hash':digest({'title':title,'content':content}),'links':links,'deep':deep,'public_images':public_images}
 
 def corpus_hash(posts):
     return digest(sorted((str(p['post_id']),p['status'],p.get('url',''),p.get('title',''),digest(p.get('content',''))) for p in posts))
