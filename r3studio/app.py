@@ -22,7 +22,7 @@ class DemoAdapter:
 
 class App:
     def __init__(self,root):
-        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev83 시험판'); root.geometry('1080x720')
+        self.root=root; root.title('R3.0 Blogger 통합 스튜디오 · Dev84 시험판'); root.geometry('1080x720')
         from .tasks import Cancellation
         self.cancel_token=Cancellation()
         self.events=queue.Queue(); self.busy=False; self.demo=tk.BooleanVar(value=True)
@@ -281,6 +281,8 @@ class App:
         ttk.Button(replacement_controls,text='본문·이미지 전체 새로 만들기',command=replace_all).pack(side='left')
         if result.get('replacement_job_id'):
             ttk.Button(replacement_controls,text='전체 교체 작업 이어서 진행',command=lambda:self.start_ai('replace_resume',{'proposal_id':pid}) if not self.busy else None).pack(side='left',padx=8)
+        if result.get('mode')=='REPLACEMENT' and result.get('error_diagnostic',{}).get('reason')=='EVIDENCE_ORIGINALS_INCOMPLETE':
+            ttk.Button(replacement_controls,text='근거 미확보 문장 보완',command=lambda:self.start_ai('repair_evidence',{'proposal_id':pid}) if not self.busy else None).pack(side='left',padx=8)
         ttk.Button(replacement_controls,text='수정안 최종 검증',state='disabled' if result.get('mode')=='REPLACEMENT' and not result.get('replacement_preview_ready') else 'normal',command=lambda:self.start_ai('repair_validate',{'proposal_id':pid,'slot':1}) if not self.busy else None).pack(side='right')
         title=result.get('proposed_title') or result.get('plan',{}).get('proposal',{}).get('title') or ('아직 생성되지 않음' if result.get('mode')=='REPLACEMENT' else result['before'].get('title',''))
         requested='\n입력한 새 제목: '+result.get('replacement_topic','') if result.get('mode')=='REPLACEMENT' else ''
@@ -510,7 +512,7 @@ class App:
             from .ai import Gemini,AIError as GeminiError
             from .evidence import collect_cached,EvidenceHold
             from .generation import Generation
-            store=Store(str(self.base/'studio.sqlite3'));task=TaskLog(store,{'generate':'새 글 생성','images':'이미지 후보 검사','repair':'기존 글 수정안 생성','apply_repair':'수정안 적용','rollback':'백업 복원','jobs':'보류 목록 조회','load_job':'저장 작업 조회','resume':'이어서 작성','finalize':'최종 검사','generate_images':'이미지 자동 생성','upload_images':'이미지 업로드','draft':'초안 저장','publish':'공개 발행','schedule':'예약 저장','deep':'심층 검사','reconcile':'이전 저장 결과 재확인','reconcile_apply':'수정 결과 확인','reconcile_images':'이미지 업로드 결과 확인','repair_image_import':'수정 이미지 후보 검사','repair_image_generate':'수정 이미지 재생성','repair_alt':'ALT·설명 재생성','repair_image_choose':'이미지 후보 선택','repair_image_cancel':'이미지 후보 취소','repair_validate':'수정안 최종 검증','replace_post':'본문·이미지 전체 새로 만들기','replace_all':'본문·이미지 전체 새로 만들기','replace_resume':'전체 교체 작업 이어서 진행','execute_plan':'검토한 저장 계획 실행'}.get(action,'작업'))
+            store=Store(str(self.base/'studio.sqlite3'));task=TaskLog(store,{'generate':'새 글 생성','images':'이미지 후보 검사','repair':'기존 글 수정안 생성','apply_repair':'수정안 적용','rollback':'백업 복원','jobs':'보류 목록 조회','load_job':'저장 작업 조회','resume':'이어서 작성','finalize':'최종 검사','generate_images':'이미지 자동 생성','upload_images':'이미지 업로드','draft':'초안 저장','publish':'공개 발행','schedule':'예약 저장','deep':'심층 검사','reconcile':'이전 저장 결과 재확인','reconcile_apply':'수정 결과 확인','reconcile_images':'이미지 업로드 결과 확인','repair_image_import':'수정 이미지 후보 검사','repair_image_generate':'수정 이미지 재생성','repair_alt':'ALT·설명 재생성','repair_image_choose':'이미지 후보 선택','repair_image_cancel':'이미지 후보 취소','repair_validate':'수정안 최종 검증','repair_evidence':'근거 미확보 문장 보완','replace_post':'본문·이미지 전체 새로 만들기','replace_all':'본문·이미지 전체 새로 만들기','replace_resume':'전체 교체 작업 이어서 진행','execute_plan':'검토한 저장 계획 실행'}.get(action,'작업'))
             if action in ('jobs','load_job'):
                 from .local_jobs import read_jobs
                 self.cancel_token.checkpoint()
@@ -542,7 +544,7 @@ class App:
             self.cancel_token.checkpoint()
             selected=value if action in ('deep','repair') else None
             if action=='replace_post':selected=value['post_id']
-            if action.startswith('repair_image_') or action in ('repair_alt','repair_validate','replace_all','replace_resume'):
+            if action.startswith('repair_image_') or action in ('repair_alt','repair_validate','repair_evidence','replace_all','replace_resume'):
                 repair_row=store.db.execute('SELECT post_id FROM repair_proposals WHERE id=? AND blog_id=?',(value['proposal_id'],adapter.blog_id)).fetchone()
                 if not repair_row:raise ValueError('수정안 기록 없음')
                 selected=repair_row['post_id']
@@ -564,12 +566,13 @@ class App:
                     task.finish('FAILED',json.dumps({**result.get('error_diagnostic',{}),'kind':'REPLACEMENT_HOLD','model':getattr(ai,'model',''),'stage':result.get('replacement_stage','생성 준비'),'summary':result.get('reason','생성 보류'),'action':'본문 검사·보완 기록에서 미통과 항목과 문장을 확인하고 같은 작업을 이어서 진행하세요.'},ensure_ascii=False))
                 else:task.finish('COMPLETED')
                 self.events.put(('repair_ready',result));return
-            if action.startswith('repair_image_') or action in ('repair_alt','repair_validate'):
+            if action.startswith('repair_image_') or action in ('repair_alt','repair_validate','repair_evidence'):
                 from .repair_images import RepairImages
                 from .bridge import WriteBridgeAdapter
                 service=RepairImages(store,WriteBridgeAdapter.from_environment(),ai,self.base/'image_cache',progress)
                 try:
                     if action=='repair_validate':result=service.validate(value['proposal_id'])
+                    elif action=='repair_evidence':result=service.repair_evidence(value['proposal_id'])
                     else:
                         generator=None
                         if action=='repair_image_generate':
@@ -586,7 +589,7 @@ class App:
                     if getattr(error,'diagnostic',None):payload['error_diagnostic']=error.diagnostic
                     result=service.save(value['proposal_id'],payload)
                     finish_error(task,error);self.events.put(('repair_ready',result));return
-                if action=='repair_validate':
+                if action in ('repair_validate','repair_evidence'):
                     from .tasks import finish_validation
                     finish_validation(task,result)
                 else:task.finish('COMPLETED')

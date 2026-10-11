@@ -318,6 +318,14 @@ def report(proposal):
     for attempt in proposal.get('final_evidence_attempts',[]):
         labels={'STARTED':'원문 대조 시작','HOLD':'보류','VERIFIED':'원문 대조 통과'}
         lines.append('최종 근거 검사 '+str(attempt.get('attempt',''))+'차: '+labels.get(attempt.get('state'),attempt.get('state','확인 필요')))
+    for attempt in proposal.get('final_text_repairs',[]):
+        lines.append('\n최종 근거 문장 보완 · '+attempt.get('state','확인 필요')+' · 최대 1회 / 이번 클릭')
+        if attempt.get('reason'):lines.append('보완 결과: '+attempt['reason'])
+        if attempt.get('before_length') is not None:lines.append('본문 '+str(attempt['before_length'])+'자 → '+str(attempt.get('after_length','미완료'))+'자')
+        for change in attempt.get('edits',[]):
+            lines.extend(['보완 전: '+change.get('before_text',''),'보완 후: '+change.get('after_text',''),'보완 이유: '+change.get('reason','')])
+        if attempt.get('candidate_content') and attempt.get('state') not in ('APPLIED','VERIFIED','APPLIED_HOLD'):
+            lines.extend(['보존된 미반영 보완 후보 · 본문을 교체하지 않았습니다.',body_text(attempt['candidate_content'])])
     binding=proposal.get('reference_bindings',{})
     if binding.get('references'):
         lines.append('\n본문에 실제 연결한 참고 자료')

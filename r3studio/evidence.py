@@ -26,7 +26,9 @@ class ArticleContext(HTMLParser):
         if tag in ('script','style'):self.hidden+=1
         if tag=='a':
             url=dict(attrs).get('href','')
-            if url.startswith('https://'):self.links.append(display_url(url))
+            if url.startswith('https://'):
+                parsed=urlsplit(url)
+                if parsed.hostname and not parsed.username and not parsed.password:self.links.append(url) # Keep document-selecting query values for research; redact only in display.
         if tag in ('p','h1','h2','h3','li','br'):self.text.append('\n')
     def handle_endtag(self,tag):
         if tag in ('script','style'):self.hidden=max(0,self.hidden-1)

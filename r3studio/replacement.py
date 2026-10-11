@@ -96,6 +96,10 @@ class Replacement:
     def resume(self,pid,generator):
         row,p=self.images.load(pid);self.images.baseline(p)
         if p.get('mode')!='REPLACEMENT':raise ImageHold('전체 교체 작업을 선택하세요.')
+        if p.get('error_diagnostic',{}).get('reason')=='EVIDENCE_ORIGINALS_INCOMPLETE' and p.get('replacement_preview_ready'):
+            # Final evidence HOLD is a different state from text-ready generation.
+            # Repair identified prose without restarting generation or image APIs.
+            return self.images.repair_evidence(pid)
         g=Generation(self.store,self.ai,self.adapter.blog_id,self.progress)
         job=p.get('replacement_job_id')
         if type(job) is not int:raise ImageHold('전체 교체 생성 작업 기록 없음: 새 작업 필요')

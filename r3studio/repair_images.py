@@ -126,6 +126,9 @@ class RepairImages:
         candidates[key]=candidate
         p['reason']='후보 검증 '+candidate['result']+' · 이 후보로 교체를 누르기 전에는 선택 이미지가 바뀌지 않습니다.'
         return self.save(pid,p)
+    def repair_evidence(self,pid):
+        from .final_text_repair import repair
+        return repair(self,pid)
     def validate(self,pid,download=public_image_bytes,fetch=None):
         from dataclasses import asdict
         from .google import public_fetch
@@ -193,7 +196,12 @@ class RepairImages:
             audit=collect(self.ai,title,content,pack,self.progress,record_fact,
                 stage='수정안 최종 독립 Fact 검색',image_generation_started=p.get('mode')=='REPLACEMENT')
             deep=evaluate(self.ai,dict(before,title=title,content=content,independent_fact_search=audit),pack,fast)
-            if not deep.get('text_verified'):raise ImageHold('수정안 본문 최종 품질 미통과')
+            if not deep.get('text_verified'):
+                from .text_flow import diagnosis
+                from .evidence import EvidenceHold
+                problem=diagnosis({'title':title,'content':content,'deep':deep,'fast':fast})
+                p['final_deep_result']=deep
+                raise EvidenceHold(problem['summary'],diagnostic=problem)
             p['validation_stage']='공개 이미지 최종 관련성·ALT 검사'
             self.save(pid,p)
             self.progress('공개 이미지 최종 관련성·ALT 검사',0,1)
@@ -216,4 +224,9 @@ class RepairImages:
         except Exception as exc:
             p['reason']=str(exc)
             if getattr(exc,'diagnostic',None):p['error_diagnostic']=exc.diagnostic
+            partial=getattr(exc,'partial_pack',None)
+            if (isinstance(partial,dict) and getattr(exc,'diagnostic',{}).get('reason')=='EVIDENCE_ORIGINALS_INCOMPLETE'):
+                from copy import deepcopy
+                p['final_evidence_pack']=deepcopy(partial)
+                p['final_evidence_for']=digest({'title':title,'content':p.get('proposed_content','')})
             return self.save(pid,p)

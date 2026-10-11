@@ -3,7 +3,7 @@ import re
 from urllib.parse import urlparse
 
 LABELS={'R3_BLOG_ID':'Blogger 블로그 ID','R3_BRIDGE_URL':'Bridge 웹 앱 주소','R3_BRIDGE_SECRET':'Bridge 인증값','R3_GEMINI_KEY':'Gemini API 키','R3_GEMINI_MODEL':'글 검사 모델명','R3_IMAGE_MODEL':'이미지 생성 모델명','R3_GSC_TOKEN':'Search Console 접근 토큰','R3_GSC_PROPERTY':'Search Console 속성 주소'}
-AI_ACTIONS={'replace_post','replace_all','replace_resume','repair_image_import','repair_image_generate','repair_alt','repair_validate','deep','generate','images','repair','resume','finalize','generate_images'}
+AI_ACTIONS={'replace_post','replace_all','replace_resume','repair_image_import','repair_image_generate','repair_alt','repair_validate','repair_evidence','deep','generate','images','repair','resume','finalize','generate_images'}
 LOCAL_ACTIONS={'jobs','load_job'}
 KNOWN_ACTIONS=AI_ACTIONS|LOCAL_ACTIONS|{'repair_image_choose','repair_image_cancel','sync','google','apply_repair','rollback','reconcile_apply','reconcile','reconcile_images','upload_images','draft','publish','schedule','execute_plan'}
 
