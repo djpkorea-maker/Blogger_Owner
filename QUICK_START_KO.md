@@ -1,3 +1,13 @@
+# Dev86: 다운로드 묶음에서 빠진 필수 파일 복구
+
+- 원인: Dev85 빌드·실행 시험에서는 .tld_set_snapshot이 있었지만, GitHub upload-artifact의 include-hidden-files:false로 실제 다운로드 ZIP에서 빠졌습니다. 본문 근거·사용자 설정 오류가 아닙니다.
+- 비공개 사용자 데이터가 없는 빌드 배포 폴더에 한해 include-hidden-files:true를 적용합니다. 기존 배포 manifest로 모든 파일 해시를 검사합니다.
+- 업로드된 묶음을 GitHub에서 다시 다운로드하고 한글 경로에 해제한 뒤, 파일 무결성과 Studio·Diagnostics 각각의 필수 PSL 파일을 검사합니다. 원래 빌드 경로가 아닌 내려받은 EXE 두 개를 실제로 실행해 UI·DPAPI·오프라인 출처 판정 시험을 마친 경우에만 배포 성공으로 봅니다.
+- 일반 실행 시작 시에도 출처 판정 파일을 먼저 확인합니다. 누락·손상은 PACKAGE_RESOURCE_MISSING으로 구분하며 원문 근거 부족·사실 오류로 표시하지 않습니다.
+- Dev85를 종료하고 Dev86 ZIP을 새 폴더에 전체 해제하세요. Studio 폴더와 그 안의 _internal을 함께 유지하고 Studio/R3_Blogger_Studio.exe를 실행합니다. EXE만 따로 옮기지 않습니다.
+- 설정·DB·기존 본문·이미지 2장·ALT·그림 설명·업로드 결과를 보존합니다. 기존 전체 교체 작업을 불러온 후 수정안 최종 검증을 진행하세요. 글/이미지 재생성이나 Bridge 재배포는 필요하지 않습니다.
+- 이 시험은 실제 다운로드 묶음의 Windows 실행을 확인합니다. 사용자 Gemini/Blogger에서 해당 글의 최종 PASS·적용 완료는 별도입니다.
+
 # Dev85: 삼성·LG 독립 출처 계산 및 단계별 원인 표시 수정
 
 - 원인: 주소의 마지막 두 조각만 취해 samsungsvc.co.kr와 lge.co.kr를 모두 co.kr로 계산했습니다. 독립 출처 검사에서 문장 판정 전에 중단됐는데, 이를 지원 0개·모든 문장 근거 부족으로 표시했습니다.

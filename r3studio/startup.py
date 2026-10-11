@@ -66,17 +66,14 @@ def smoke_test():
     previous={k:os.environ.get(k) for k in environment_keys}
     root=None
     try:
-        from .source_domains import registered_domain
-        if (registered_domain('https://www.samsungsvc.co.kr/solution/147574')!='samsungsvc.co.kr'
-            or registered_domain('https://www.lge.co.kr/story/user-guide')!='lge.co.kr'
-            or registered_domain('https://one.blogspot.com/')!='one.blogspot.com'):
-            raise RuntimeError('오프라인 출처 도메인 판정 실패')
+        from .source_domains import check_domain_resources
+        check_domain_resources()
         with tempfile.TemporaryDirectory(prefix='r3-smoke-') as folder:
             for key in FIELDS:os.environ.pop(key,None)
             os.environ['LOCALAPPDATA']=folder
             root=tk.Tk();root.withdraw()
             app=App(root)
-            if 'Dev85 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
+            if 'Dev86 시험판' not in root.title():raise RuntimeError('시험판 버전 표시 실패')
             root.update_idletasks() # No scheduled startup/network callbacks.
             if len(app.tabs.tabs())!=3:raise RuntimeError('세 메뉴 화면 구성 실패')
             if len(app.inspect_panes.panes())!=2:raise RuntimeError('목록·상세 조절 창 구성 실패')
@@ -279,6 +276,8 @@ def launch(diagnostic=False,app_factory=None,root_factory=None):
     if diagnostic and sys.stdout is not None:print(json.dumps(diagnostic_summary(),ensure_ascii=False,indent=2))
     try:
         lock=InstanceLock(base/'studio.lock').acquire()
+        from .source_domains import check_domain_resources
+        check_domain_resources()
         from .backups import daily_snapshots
         daily_snapshots(base)
         root=(root_factory or tk.Tk)()
@@ -296,7 +295,9 @@ def launch(diagnostic=False,app_factory=None,root_factory=None):
         return 2
     except Exception as error:
         path=record_failure(base,error)
-        notify('showerror','R3.0 실행 오류','프로그램을 열지 못했습니다. 진단 모드에서 환경을 확인하세요.\n진단 기록: '+str(path),parent=root)
+        detail=getattr(error,'diagnostic',{}) or {}
+        message=detail.get('summary') if detail.get('reason')=='PACKAGE_RESOURCE_MISSING' else '프로그램을 열지 못했습니다. 진단 모드에서 환경을 확인하세요.\n진단 기록: '+str(path)
+        notify('showerror','R3.0 실행 오류',message,parent=root)
         return 1
     finally:
         if root is not None:
