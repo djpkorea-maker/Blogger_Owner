@@ -2,7 +2,7 @@ import json,tempfile,unittest
 from copy import deepcopy
 from unittest.mock import patch
 from r3studio.ai import Gemini,AIError
-from r3studio.origin_response import SCHEMA,shape_issues,request_review
+from r3studio.origin_response import SCHEMA,shape_issues,request_review,review_schema
 from r3studio.sources import verify_origins,require_originals,SourceReader
 from r3studio.generation_evidence import prepare
 from r3studio.generation import Generation
@@ -33,7 +33,7 @@ class Tests(unittest.TestCase):
         review,trace=request_review(Gemini('test','mock',transport),context())
         self.assertEqual(review,valid());self.assertEqual(len(calls),2)
         for p in calls:
-            self.assertEqual(p['response_format']['schema'],SCHEMA)
+            self.assertEqual(p['response_format']['schema'],review_schema(context()))
             self.assertFalse(p['store']);self.assertNotIn('tools',p)
         self.assertIn('sources: 필수 목록 누락',calls[1]['input'])
         self.assertEqual([t['state'] for t in trace],['FORMAT_ERROR','VALID_SHAPE'])

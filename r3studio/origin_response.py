@@ -21,6 +21,17 @@ def source_ids(context):
     known={s['id'] for s in context.get('sources',[]) if isinstance(s,dict) and isinstance(s.get('id'),str)}
     return known or available,available
 
+def review_schema(context):
+    """Constrain IDs in the request without translating/coercing returned IDs."""
+    schema=deepcopy(SCHEMA)
+    known,_=source_ids(context)
+    facts=sorted({f['id'] for f in context['facts']})
+    if known:
+        for key in ('claims','sources'):
+            schema['properties'][key]['items']['properties']['source_id']['enum']=sorted(known)
+    if facts:schema['properties']['claims']['items']['properties']['fact_id']['enum']=facts
+    return schema
+
 def contract_summary(context,value=None):
     known,available=source_ids(context)
     rows=value.get('sources',[]) if isinstance(value,dict) else []
@@ -87,7 +98,7 @@ def request_review(ai,context,progress=lambda *a:None):
         value=None
         try:
             method=getattr(ai,'structured_object',None)
-            value=method(prompt,deepcopy(SCHEMA)) if callable(method) else ai.object(prompt)
+            value=method(prompt,review_schema(context)) if callable(method) else ai.object(prompt)
             issues=shape_issues(value,context)
         except AIError as exc:
             if (exc.diagnostic or {}).get('reason')!='STRUCTURED_OUTPUT_FORMAT':raise

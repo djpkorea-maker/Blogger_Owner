@@ -1,7 +1,7 @@
 """Known unreadable source rows are structural data, never verified evidence."""
 import copy,json,tempfile,unittest
 from unittest.mock import patch,Mock
-from r3studio.origin_response import shape_issues,request_review,contract_summary
+from r3studio.origin_response import shape_issues,request_review,contract_summary,review_schema,SCHEMA
 from r3studio.sources import verify_origins,require_originals
 from r3studio.evidence import EvidenceHold
 from r3studio.presentation import diagnostic_lines
@@ -58,6 +58,18 @@ class Tests(unittest.TestCase):
   self.assertEqual(trace[0]['source_contract']['unavailable_response_rows'],[4])
   data=json.loads(ai.prompts[0].split('\n',1)[1])
   self.assertEqual(data['source_id_contract']['unavailable_ledger_ids'],['s4'])
+ def test_real_json_request_limits_source_and_fact_ids_without_mutating_base_schema(self):
+  from r3studio.ai import Gemini
+  payloads=[];original=copy.deepcopy(SCHEMA)
+  def transport(payload):
+   payloads.append(payload)
+   return {'outputs':[{'type':'text','text':json.dumps(answer())}]}
+  request_review(Gemini('test','mock',transport),context())
+  schema=payloads[0]['response_format']['schema']
+  self.assertEqual(schema,review_schema(context()))
+  self.assertEqual(schema['properties']['sources']['items']['properties']['source_id']['enum'],['s1','s2','s3','s4'])
+  self.assertEqual(schema['properties']['claims']['items']['properties']['fact_id']['enum'],['f0','f1','f2','f3'])
+  self.assertEqual(SCHEMA,original)
  def test_legacy_context_without_source_list_can_use_only_provided_original_ids(self):
   ctx=context();ctx.pop('sources');v=answer();v['sources']=v['sources'][:3]
   self.assertEqual(shape_issues(v,ctx),[])

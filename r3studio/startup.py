@@ -249,7 +249,7 @@ def smoke_test():
             if original_ai.refills!=1 or original_reader.calls!=1 or '근거 없는' in json.dumps(writer_context('안전 점검','안전 점검',refilled),ensure_ascii=False):raise RuntimeError('원문 기반 새 글 근거 재구성 실패')
             # Exercise the real JSON client/schema/retry path in each frozen EXE.
             from .ai import Gemini
-            from .origin_response import request_review,SCHEMA
+            from .origin_response import request_review,SCHEMA,review_schema
             calls=[]
             context={'facts':refilled['facts'],'sources':refilled['sources'],'originals':refilled['original_verification']['originals']}
             def format_transport(payload):
@@ -257,7 +257,7 @@ def smoke_test():
                 value={'claims':{}} if len(calls)==1 else original_ai.object('claims:[{fact_id\n'+json.dumps(context,ensure_ascii=False))
                 return {'outputs':[{'type':'text','text':json.dumps(value,ensure_ascii=False)}]}
             response,trace=request_review(Gemini('local-smoke-test-only','mock',format_transport),context)
-            if len(calls)!=2 or trace[-1]['state']!='VALID_SHAPE' or any(c['response_format']['schema']!=SCHEMA for c in calls):raise RuntimeError('원문 검사 필수 스키마·형식 재검사 실패')
+            if len(calls)!=2 or trace[-1]['state']!='VALID_SHAPE' or any(c['response_format']['schema']!=review_schema(context) for c in calls):raise RuntimeError('원문 검사 필수 스키마·형식 재검사 실패')
             # Reproduce a sources[4] row from a known but unreadable ledger
             # inside both downloaded frozen EXEs, with the real JSON client.
             shadow_pack=deepcopy(refilled)
