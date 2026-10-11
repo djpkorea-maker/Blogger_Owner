@@ -103,7 +103,7 @@ class Replacement:
         try:
             payload=g.load_job(job)['payload'];target=replacement_target(self.store,self.adapter.blog_id,payload)
             if target['proposal_id']!=pid:raise ImageHold('다른 수정안의 생성 작업: 진행 중지')
-            self.progress('전체 교체 본문 생성',0,1)
+            self.progress('저장 본문 검사·보완' if payload.get('content') and not text_ready(payload) else '이미지 단계 준비' if text_ready(payload) else '전체 교체 본문 생성',0,1)
             from .text_flow import continue_saved
             if not text_ready(payload):
                 try:
@@ -111,7 +111,7 @@ class Replacement:
                     else:
                         g.resume(job)
                         generated=g.load_job(job)['payload']
-                        if generated.get('content') and not text_ready(generated):continue_saved(g,job,use_current_review=True)
+                        if generated.get('content') and generated.get('deep',{}).get('review') and not text_ready(generated):continue_saved(g,job,use_current_review=True)
                 finally:
                     # Generation persists partial results even on cancellation/errors.
                     self.capture(pid,p,g,job)
@@ -167,7 +167,7 @@ class Replacement:
     def capture(self,pid,p,g,job):
         record=g.load_job(job);payload=record['payload']
         p['replacement_stage']=record['stage']
-        for key in ('text_versions','text_review_history','text_repair_attempts','image_candidates'):
+        for key in ('text_versions','text_review_history','text_repair_attempts','image_candidates','fact_search_attempts','image_pipeline'):
             if payload.get(key):p[key]=deepcopy(payload[key])
         if payload.get('deep'):p['generation_text_review']=deepcopy(payload['deep'])
         else:p.pop('generation_text_review',None)

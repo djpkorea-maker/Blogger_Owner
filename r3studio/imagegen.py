@@ -41,9 +41,11 @@ def generate_candidates(generation,generator,job_id,directory):
     context=digest({'version':78,'title':payload['title'],'content':payload['content'],
                     'image_model':generator.model,'qa_model':generation.ai.model})
     previous=payload.get('image_candidates',[])
+    payload.setdefault('image_pipeline',{'status':'PREPARING','generation_started':any(c.get('generation_context')==context for c in previous),'stage':'이미지 단계 준비'})
     scenes=payload.get('image_scene_plan',{})
     prompts=scenes.get('prompts') if scenes.get('context')==context else None
     if not isinstance(prompts,list) or len(prompts)!=2 or any(not isinstance(p,str) or not p.strip() for p in prompts):
+        payload['image_pipeline']={'status':'PLANNING','generation_started':bool(payload.get('image_pipeline',{}).get('generation_started')),'stage':'이미지 2장 장면 계획'}
         generation.save(job_id,'이미지 2장 장면 계획','RUNNING',payload)
         prompts=generation.ai.object('본문에 맞는 서로 다른 단일 장면 이미지 2개를 계획하세요. prompts:[문자열,문자열]. 동양적 생활환경과 장비를 우선합니다. 글에 없는 장비를 넣지 마세요. 콜라주·분할 화면·글자 삽입 금지. 정확한 회로도나 치수 도면을 그림으로 만들지 마세요.\n'+json.dumps({'title':payload['title'],'content':payload['content']},ensure_ascii=False)).get('prompts')
     if not isinstance(prompts,list) or len(prompts)!=2 or any(not isinstance(p,str) or not p.strip() for p in prompts):raise ImageHold('이미지 장면 계획 오류')
@@ -69,8 +71,12 @@ def generate_candidates(generation,generator,job_id,directory):
                 attempt_id=db.execute('INSERT INTO image_generation_attempts(job_id,slot,attempt,created_at,status,payload) VALUES(?,?,?,?,?,?)',(job_id,slot,attempt,now(),'RUNNING',json.dumps({'prompt':prompt,'model':generator.model},ensure_ascii=False))).lastrowid
             terminal=None
             try:
+                payload['image_pipeline']={'status':'GENERATING','generation_started':True,'slot':slot,'attempt':attempt,'stage':'이미지 '+str(slot)+' 생성 API 응답 대기'}
+                generation.save(job_id,payload['image_pipeline']['stage'],'RUNNING',payload)
                 data=generator.image(prompt+'\nSingle coherent scene. 16:9. No collage, labels, captions or text overlays. East Asian household setting. Avoid unsupported technical details.')
                 path=directory/f'image_{slot}_attempt_{attempt_id}.jpg';path.write_bytes(data)
+                payload['image_pipeline'].update(status='CHECKING',stage='이미지 '+str(slot)+' 실제 픽셀·ALT·그림 설명 검사')
+                generation.save(job_id,payload['image_pipeline']['stage'],'RUNNING',payload)
                 generation.progress('이미지 '+str(slot)+' 실제 픽셀·ALT·그림 설명 검사',0,1)
                 result,_=ImageQA(generation.store,generation.ai).check(path,payload['title'],payload['content'],generation.blog_id,'job:'+str(job_id))
                 if result.get('error_diagnostic'):terminal=AIError(result.get('reason','이미지 AI 연결 오류'),result['error_diagnostic'])
@@ -79,6 +85,7 @@ def generate_candidates(generation,generator,job_id,directory):
                 if isinstance(exc,AIError) and exc.diagnostic:
                     result['error_diagnostic']=exc.diagnostic;terminal=exc
             result['generation_context']=context;status=result['result']
+            payload['image_pipeline'].update(status=status,stage='이미지 '+str(slot)+' 생성·QA '+status)
             with db:db.execute('UPDATE image_generation_attempts SET status=?,payload=? WHERE id=?',(status,json.dumps(result,ensure_ascii=False),attempt_id))
             payload['image_candidates']=results+[result]
             payload['reason']='이미지 '+str(slot)+' · '+('픽셀·ALT·그림 설명 검사 통과' if status=='PASS' else result.get('reason','후보 보류'))
@@ -90,6 +97,7 @@ def generate_candidates(generation,generator,job_id,directory):
             if status=='PASS':break
         results.append(result);save_result('이미지 '+str(slot)+' 후보 기록 보관')
     payload.pop('error_diagnostic',None)
+    payload['image_pipeline'].update(status='READY' if all(r['result']=='PASS' for r in results) else 'HOLD',stage='이미지 2장·ALT·그림 설명 검사 종료')
     payload['reason']='이미지 2장 생성·QA 완료. 업로드 대기' if all(r['result']=='PASS' for r in results) else '이미지 생성·QA 보강 후에도 보류'
     save_result('이미지 자동 생성')
     return {'job_id':job_id,'status':'HOLD','reason':payload['reason'],'images':results}

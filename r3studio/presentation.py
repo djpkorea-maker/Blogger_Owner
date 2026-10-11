@@ -129,6 +129,11 @@ def inspection_text(row):
 
 def diagnostic_lines(detail):
     lines=[]
+    if detail.get('fact_search_attempts'):
+        from .fact_search import diagnostic_lines as search_lines
+        lines.extend(search_lines(detail['fact_search_attempts']))
+    if detail.get('image_generation_started') is not None:
+        lines.append('이미지 생성 API 호출: '+('시작됨' if detail['image_generation_started'] else '아직 시작하지 않음'))
     if detail.get('text_review'):
         from .text_flow import review_lines
         lines.extend(review_lines(detail['text_review']))

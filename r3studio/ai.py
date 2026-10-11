@@ -61,6 +61,43 @@ def output_blocks(raw):
     if not isinstance(blocks,list) or any(not isinstance(b,dict) for b in blocks):raise AIError('AI 응답 본문 형식 오류')
     return blocks
 
+
+def search_metadata(raw,blocks):
+    """Inspect API metadata only; never mine URLs from model prose or suggestions."""
+    from urllib.parse import urlsplit
+    citations=[];invalid=0;annotations=0;seen=set()
+    for block in blocks:
+        if block.get('type')!='text':continue
+        values=block.get('annotations',[])
+        if values is None:values=[]
+        if not isinstance(values,list):invalid+=1;continue
+        for item in values:
+            if not isinstance(item,dict):invalid+=1;continue
+            if item.get('type')!='url_citation':continue
+            annotations+=1;url=item.get('url')
+            try:
+                parsed=urlsplit(url) if isinstance(url,str) else None
+                valid=parsed is not None and parsed.scheme=='https' and parsed.hostname and not parsed.username and not parsed.password
+            except ValueError:valid=False
+            if not valid:invalid+=1;continue
+            if url not in seen:
+                seen.add(url);citations.append({'url':url,'title':item.get('title') if isinstance(item.get('title'),str) else '',
+                    'start_index':item.get('start_index'),'end_index':item.get('end_index')})
+    calls=results=errors=0
+    for step in raw.get('steps',[]):
+        if step.get('type')=='google_search_call':calls+=1
+        elif step.get('type')=='google_search_result':
+            results+=1
+            if step.get('is_error') is True:errors+=1
+    if citations:execution='CITED'
+    elif errors:execution='ERROR'
+    elif results:execution='RESULT_WITHOUT_CITATIONS'
+    elif calls:execution='CALLED_WITHOUT_RESULT'
+    else:execution='NOT_OBSERVED'
+    return citations,{'execution':execution,'call_count':calls,'result_count':results,
+        'error_count':errors,'annotation_count':annotations,'invalid_annotation_count':invalid,
+        'citation_count':len(citations)}
+
 class Gemini:
     REQUEST_TIMEOUT_SECONDS=120
     def __init__(self,key,model,transport=None):
@@ -118,13 +155,11 @@ class Gemini:
 
         blocks=output_blocks(raw)
         text='\n'.join(b.get('text','') for b in blocks if b.get('type')=='text')
-        citations=[]
-        for block in blocks:
-            for a in block.get('annotations',[]):
-                if a.get('type')=='url_citation' and a.get('url','').startswith('https://'):
-                    citations.append({'url':a['url'],'title':a.get('title',''),'start_index':a.get('start_index'),'end_index':a.get('end_index')})
+        citations,search_diagnostic=search_metadata(raw,blocks)
         if not text: raise AIError('AI가 유효한 본문을 반환하지 않았습니다.')
-        return {'text':text,'citations':citations,'model':self.model,'search_enabled':search}
+        result={'text':text,'citations':citations,'model':self.model,'search_enabled':search}
+        if search:result['search_diagnostic']=search_diagnostic
+        return result
     def object(self,prompt):
         response=self.ask(prompt+'\n응답은 JSON 객체 하나만 반환하세요. 코드 블록 및 해설은 제외합니다.',json_output=True)
         return self.parse_object(response['text'])
